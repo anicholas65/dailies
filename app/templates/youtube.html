@@ -31,7 +31,7 @@
     {% endif %}
   </div>
   {% if auth.running %}
-  <div class="vnc"><iframe src="/novnc/vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;show_dot=1&amp;path=vnc/ws" title="Sign-in browser" allow="clipboard-read; clipboard-write"></iframe></div>
+  <div class="vnc"><iframe src="/novnc/vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;show_dot=1&amp;path=/vnc/ws" title="Sign-in browser" allow="clipboard-read; clipboard-write"></iframe></div>
   <p class="muted">This is a real Chromium running inside the Dailies container. Sign in to Google normally (2-step verification works), make sure YouTube shows your avatar, then press <b>Done</b>. Your password goes only to Google — Dailies just keeps the browser profile in <code>/config/browser</code>, and yt-dlp reads its cookies.</p>
   {% else %}
   <ol class="muted steps">

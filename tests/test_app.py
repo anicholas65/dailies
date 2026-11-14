@@ -178,3 +178,11 @@ def test_browser_failure_is_reported(client, monkeypatch, tmp_path):
     loc = unquote_plus(r.headers["location"])
     assert "ok=0" in loc and "xvfb exited with code 1" in loc and "no screens found" in loc
     assert not browser.running()
+
+
+def test_vnc_iframe_uses_absolute_ws_path(client, monkeypatch):
+    # noVNC 1.6 resolves a relative path against /novnc/vnc.html, which misses the proxy route.
+    monkeypatch.setattr(browser, "running", lambda: True)
+    html = client.get("/youtube").text
+    assert "path=/vnc/ws" in html
+    assert any(r.path == "/vnc/ws" for r in client.app.routes)
