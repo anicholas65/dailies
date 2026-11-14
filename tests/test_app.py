@@ -1,0 +1,157 @@
+import time
+
+from app import browser, config, db, ytdl
+
+COOKIES = """# Netscape HTTP Cookie File
+.youtube.com\tTRUE\t/\tTRUE\t{exp}\tLOGIN_INFO\tabc
+.youtube.com\tTRUE\t/\tTRUE\t{exp}\tSAPISID\tdef
+.google.com\tTRUE\t/\tTRUE\t{exp}\tSID\tghi
+"""
+
+
+def test_pages_render(client):
+    for path in ["/", "/sources", "/media", "/profiles", "/youtube", "/settings", "/api/status"]:
+        r = client.get(path)
+        assert r.status_code == 200, path
+
+
+def test_add_source_and_detail(client):
+    r = client.post("/sources", data={"url": "https://www.youtube.com/@SomeChannel", "profile_id": "1",
+                                      "interval_hours": "6", "max_items": "0"}, follow_redirects=False)
+    assert r.status_code == 303
+    s = db.one("SELECT * FROM sources")
+    assert s["name"] == "SomeChannel" and s["kind"] == "channel"
+    assert client.get(r.headers["location"]).status_code == 200
+
+
+def test_edit_source_flags(client):
+    client.post("/sources", data={"url": "https://www.youtube.com/@x"})
+    client.post("/sources/1/edit", data={"name": "X", "url": "https://www.youtube.com/@x", "kind": "channel",
+                                         "profile_id": "1", "interval_hours": "12", "include_shorts": "on",
+                                         "enabled": "on"})
+    s = db.one("SELECT * FROM sources WHERE id=1")
+    assert (s["name"], s["interval_hours"], s["include_shorts"], s["auto_download"]) == ("X", 12, 1, 0)
+    assert ytdl.source_urls(s) == ["https://www.youtube.com/@x/videos", "https://www.youtube.com/@x/shorts"]
+
+
+def test_detect_kind():
+    assert ytdl.detect_kind("https://www.youtube.com/playlist?list=PL123") == "playlist"
+    assert ytdl.detect_kind("https://www.youtube.com/watch?v=dQw4w9WgXcQ") == "video"
+    assert ytdl.detect_kind("https://youtu.be/dQw4w9WgXcQ") == "video"
+    assert ytdl.detect_kind("https://www.youtube.com/@chan") == "channel"
+
+
+def test_profile_opts(client):
+    p = db.one("SELECT * FROM profiles WHERE quality='1080'")
+    s = {"name": "My/Chan"}
+    o = ytdl.profile_opts(p, s)
+    assert "height<=1080" in o["format"]
+    assert o["merge_output_format"] == "mp4"
+    assert "My_Chan/" in o["outtmpl"]["default"]
+    a = ytdl.profile_opts(db.one("SELECT * FROM profiles WHERE quality='audio'"), s)
+    assert a["postprocessors"][0] == {"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}
+
+
+def test_auth_opts(client):
+    db.set_setting("auth_mode", "none")
+    assert "cookiefile" not in ytdl.base_opts() and "cookiesfrombrowser" not in ytdl.base_opts()
+    config.COOKIES_FILE.write_text("x")
+    db.set_setting("auth_mode", "file")
+    assert ytdl.base_opts()["cookiefile"] == str(config.COOKIES_FILE)
+    db.set_setting("auth_mode", "browser")
+    (config.BROWSER_PROFILE / "Default").mkdir(parents=True)
+    (config.BROWSER_PROFILE / "Default" / "Cookies").write_bytes(b"")
+    assert ytdl.base_opts()["cookiesfrombrowser"][0] == "chromium"
+    assert ytdl.base_opts()["cookiesfrombrowser"][2] == "BASICTEXT"
+
+
+def test_cookie_upload_and_status(client):
+    exp = int(time.time()) + 86400 * 30
+    r = client.post("/youtube/cookies", files={"file": ("cookies.txt", COOKIES.format(exp=exp))},
+                    follow_redirects=False)
+    assert r.status_code == 303 and "ok=1" in r.headers["location"]
+    st = browser.status()
+    assert st["mode"] == "file" and st["signed_in"] and st["cookie_count"] == 3
+    assert "signed in" in client.get("/youtube").text
+
+
+def test_cookie_upload_rejects_junk(client):
+    r = client.post("/youtube/cookies", files={"file": ("x.txt", "hello")}, follow_redirects=False)
+    assert "ok=0" in r.headers["location"]
+    assert not config.COOKIES_FILE.exists()
+
+
+def test_browser_start_reports_missing(client, monkeypatch):
+    monkeypatch.setattr(browser, "available", lambda: {"chromium": False, "xvfb": True, "x11vnc": True, "novnc": True})
+    r = client.post("/youtube/browser/start", follow_redirects=False)
+    assert "chromium" in r.headers["location"]
+
+
+def test_skip_reason():
+    s = {"download_after": "2024-01-01", "title_filter": "", "title_exclude": "trailer", "min_duration": 60}
+    assert ytdl.skip_reason(s, {"upload_date": "20231231", "title": "a"})
+    assert ytdl.skip_reason(s, {"upload_date": "20240102", "title": "Big Trailer"})
+    assert ytdl.skip_reason(s, {"upload_date": "20240102", "title": "ok", "duration": 30})
+    assert ytdl.skip_reason(s, {"upload_date": "20240102", "title": "ok", "duration": 300}) is None
+
+
+def test_media_actions_and_index(client, monkeypatch):
+    client.post("/sources", data={"url": "https://www.youtube.com/playlist?list=PLx"})
+
+    class FakeYDL:
+        def __init__(self, opts): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def extract_info(self, url, download=False):
+            return {"_type": "playlist", "entries": [
+                {"id": "aaaaaaaaaaa", "title": "One", "url": "https://www.youtube.com/watch?v=aaaaaaaaaaa"},
+                {"id": "bbbbbbbbbbb", "title": "Two", "duration": 61.0}]}
+
+    monkeypatch.setattr(ytdl.yt_dlp, "YoutubeDL", FakeYDL)
+    assert ytdl.index_source(1) == 2
+    assert ytdl.index_source(1) == 0  # no duplicates
+    rows = db.q("SELECT * FROM media ORDER BY id")
+    assert [r["status"] for r in rows] == ["queued", "queued"]  # auto_download defaults on
+    db.run("UPDATE media SET status='pending'")
+    assert rows[1]["url"] == "https://www.youtube.com/watch?v=bbbbbbbbbbb"
+    client.post(f"/media/{rows[0]['id']}/queue")
+    assert db.one("SELECT status FROM media WHERE id=?", (rows[0]["id"],))["status"] == "queued"
+    client.post("/sources/1/queue-all")
+    assert db.one("SELECT COUNT(*) n FROM media WHERE status='queued'")["n"] == 2
+    assert "One" in client.get("/sources/1").text
+
+
+def test_download_flow(client, monkeypatch, tmp_path):
+    client.post("/sources", data={"url": "https://www.youtube.com/@c", "name": "Chan"})
+    mid = db.run("INSERT INTO media(source_id, video_id, title, url, status) VALUES (1,'vid','T','https://y/v','queued')")
+    out = config.DOWNLOADS_DIR / "Chan" / "T [vid].mp4"
+
+    class FakeYDL:
+        def __init__(self, opts): self.opts = opts
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def extract_info(self, url, download=False):
+            return {"id": "vid", "title": "T", "upload_date": "20250101", "duration": 100}
+        def process_ie_result(self, info, download=True):
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"x" * 10)
+            return info | {"requested_downloads": [{"filepath": str(out)}]}
+
+    monkeypatch.setattr(ytdl.yt_dlp, "YoutubeDL", FakeYDL)
+    assert ytdl.download(mid) == "downloaded"
+    m = db.one("SELECT * FROM media WHERE id=?", (mid,))
+    assert m["status"] == "downloaded" and m["filesize"] == 10
+    assert out.with_suffix(".nfo").read_text().count("<title>T</title>") == 1
+    client.post(f"/media/{mid}/delete")
+    assert not out.exists() and not out.with_suffix(".nfo").exists()
+
+
+def test_password(client, monkeypatch):
+    monkeypatch.setattr(config, "PASSWORD", "pw")
+    assert client.get("/", follow_redirects=False).status_code == 303
+    assert client.get("/api/status").status_code == 401
+    assert client.get("/api/health").status_code == 200
+    client.post("/login", data={"password": "nope"})
+    assert client.get("/", follow_redirects=False).status_code == 303
+    client.post("/login", data={"password": "pw"})
+    assert client.get("/", follow_redirects=False).status_code == 200

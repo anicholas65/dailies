@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% from "_macros.html" import media_row %}
+{% block title %}Media · Dailies{% endblock %}
+{% block body %}
+<form class="row filter" method="get">
+  <input name="q" value="{{ q }}" placeholder="Search titles">
+  <select name="status" onchange="this.form.submit()"><option value="">All statuses</option>
+    {% for st in ['queued','downloading','downloaded','pending','failed','skipped','deleted'] %}<option {{ 'selected' if status == st }} value="{{ st }}">{{ st }} ({{ counts.get(st, 0) }})</option>{% endfor %}
+  </select>
+  <button class="sm">Filter</button>
+</form>
+<section class="card">
+  {% if media %}<table class="list"><tbody>{% for m in media %}{{ media_row(m) }}{% endfor %}</tbody></table>
+  {% else %}<p class="muted">Nothing here.</p>{% endif %}
+</section>
+{% endblock %}

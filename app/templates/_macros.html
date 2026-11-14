@@ -1,0 +1,22 @@
+{% macro badge(status) %}<span class="badge {{ status }}">{{ status }}</span>{% endmacro %}
+{% macro date(d) %}{% if d and d|length == 8 %}{{ d[:4] }}-{{ d[4:6] }}-{{ d[6:] }}{% else %}{{ d or '—' }}{% endif %}{% endmacro %}
+{% macro dur(s) %}{% if s %}{{ '%d:%02d:%02d'|format(s // 3600, s % 3600 // 60, s % 60) if s >= 3600 else '%d:%02d'|format(s // 60, s % 60) }}{% endif %}{% endmacro %}
+{% macro size(b) %}{% if b %}{{ '%.1f GB'|format(b / 1073741824) if b > 1073741824 else '%.0f MB'|format(b / 1048576) }}{% endif %}{% endmacro %}
+{% macro media_row(m, show_source=true) %}
+<tr data-media="{{ m.id }}">
+  <td class="title"><a href="https://www.youtube.com/watch?v={{ m.video_id }}" target="_blank" rel="noopener">{{ m.title }}</a>
+    {% if show_source %}<div class="sub">{{ m.source }}</div>{% endif %}
+    {% if m.error and m.status in ('failed','skipped') %}<div class="err">{{ m.error }}</div>{% endif %}
+    <div class="prog" hidden><span></span><em></em></div>
+  </td>
+  <td class="nowrap">{{ date(m.upload_date) }}</td>
+  <td class="nowrap num">{{ dur(m.duration) }}</td>
+  <td>{{ badge(m.status) }}</td>
+  <td class="actions">
+    {% if m.status in ('pending','skipped','deleted') %}<form method="post" action="/media/{{ m.id }}/queue"><button class="sm">Download</button></form>{% endif %}
+    {% if m.status == 'failed' %}<form method="post" action="/media/{{ m.id }}/retry"><button class="sm">Retry</button></form>{% endif %}
+    {% if m.status in ('pending','queued','failed') %}<form method="post" action="/media/{{ m.id }}/skip"><button class="sm ghost">Skip</button></form>{% endif %}
+    {% if m.status == 'downloaded' %}<form method="post" action="/media/{{ m.id }}/delete" data-confirm="Delete the file from disk?"><button class="sm ghost">Delete file</button></form>{% endif %}
+  </td>
+</tr>
+{% endmacro %}

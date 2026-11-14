@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block body %}
+<section class="card narrow">
+  <h1>Sign in to Dailies</h1>
+  {% if error %}<p class="err">Wrong password.</p>{% endif %}
+  <form method="post" action="/login" class="stack">
+    <label>Password <input type="password" name="password" autofocus required></label>
+    <button>Sign in</button>
+  </form>
+</section>
+{% endblock %}

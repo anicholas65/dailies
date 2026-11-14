@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Dailies</Name>
+  <Repository>ghcr.io/anicholas65/dailies:latest</Repository>
+  <Registry>https://github.com/anicholas65/dailies/pkgs/container/dailies</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Maintainer>
+    <Name>Alan Nicholas</Name>
+    <WebPage>https://github.com/anicholas65</WebPage>
+  </Maintainer>
+  <Support>https://github.com/anicholas65/dailies/issues</Support>
+  <Project>https://github.com/anicholas65/dailies</Project>
+  <Overview>Self-hosted YouTube archiver by Alan Nicholas, in the spirit of Pinchflat: subscribe to channels and playlists, download new uploads on a schedule with quality profiles, SponsorBlock, subtitles, thumbnails and Jellyfin/Plex NFO files. Sign in to your YouTube account from a built-in Chromium browser right in the web UI (or upload cookies.txt) to get age-restricted, members-only and private videos, Watch Later and Liked videos.</Overview>
+  <Category>Downloaders: MediaApp:Video</Category>
+  <WebUI>http://[IP]:[PORT:8945]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/anicholas65/dailies/main/unraid/dailies.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/anicholas65/dailies/main/app/static/icon.png</Icon>
+  <ExtraParams>--shm-size=512m</ExtraParams>
+  <Config Name="WebUI Port" Target="8945" Default="8945" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8945</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/dailies" Mode="rw" Description="Database, Chromium sign-in profile, cookies" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/dailies</Config>
+  <Config Name="Downloads" Target="/downloads" Default="/mnt/user/data/media/youtube" Mode="rw" Description="Where videos are saved" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/data/media/youtube</Config>
+  <Config Name="Web UI password" Target="DAILIES_PASSWORD" Default="" Mode="" Description="Optional but recommended: the web UI controls a browser signed in to your Google account" Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Auto-update yt-dlp" Target="YTDLP_AUTO_UPDATE" Default="1" Mode="" Description="1 = fetch the newest yt-dlp on every container start" Type="Variable" Display="advanced" Required="false" Mask="false">1</Config>
+  <Config Name="Browser screen size" Target="DAILIES_SCREEN" Default="1280x800" Mode="" Description="Resolution of the sign-in browser" Type="Variable" Display="advanced" Required="false" Mask="false">1280x800</Config>
+</Container>

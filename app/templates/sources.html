@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Sources · Dailies{% endblock %}
+{% block body %}
+<section class="card">
+  <h2>Add a source</h2>
+  <form method="post" action="/sources" class="grid">
+    <label class="wide">Channel, playlist or video URL <input name="url" type="url" required placeholder="https://www.youtube.com/@channel  ·  …/playlist?list=…"></label>
+    <label>Name <input name="name" placeholder="auto from URL"></label>
+    <label>Profile <select name="profile_id">{% for p in profiles %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select></label>
+    <label>Check every (hours) <input name="interval_hours" type="number" step="0.5" min="0.5" value="6"></label>
+    <label>Only newest N <input name="max_items" type="number" min="0" value="0" title="0 = everything"></label>
+    <label>Skip uploads before <input name="download_after" type="date"></label>
+    <div class="wide row"><button>Add &amp; index</button></div>
+  </form>
+  <div class="feeds">
+    <span class="muted">From your account:</span>
+    {% for key, f in feeds.items() %}
+    <form method="post" action="/sources/feed/{{ key }}"><button class="sm ghost" {{ 'disabled title="Sign in to YouTube first"' if not auth.signed_in }}>+ {{ f[0] }}</button></form>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Sources</h2>
+  {% if sources %}
+  <table class="list">
+    <thead><tr><th>Name</th><th>Profile</th><th class="num">Downloaded</th><th class="num">Queued</th><th>Last checked</th><th></th></tr></thead>
+    <tbody>
+    {% for s in sources %}
+    <tr>
+      <td class="title"><a href="/sources/{{ s.id }}">{{ s.name }}</a>
+        <div class="sub">{{ s.kind }} · every {{ s.interval_hours|round(1) }}h{% if not s.enabled %} · <b>disabled</b>{% endif %}</div>
+        {% if s.last_error %}<div class="err">{{ s.last_error[:200] }}</div>{% endif %}</td>
+      <td>{{ s.profile }}</td>
+      <td class="num">{{ s.done or 0 }} / {{ s.total or 0 }}</td>
+      <td class="num">{{ s.queued or 0 }}{% if s.failed %} <span class="badge failed">{{ s.failed }} failed</span>{% endif %}</td>
+      <td class="nowrap">{% if indexing == s.id %}<span class="badge downloading">indexing…</span>{% else %}{{ (s.last_indexed or 'never')[:16] }}{% endif %}</td>
+      <td class="actions"><form method="post" action="/sources/{{ s.id }}/index"><button class="sm ghost">Check now</button></form></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No sources yet.</p>{% endif %}
+</section>
+{% endblock %}

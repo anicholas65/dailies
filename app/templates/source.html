@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% from "_macros.html" import media_row %}
+{% block title %}{{ s.name }} · Dailies{% endblock %}
+{% block body %}
+<div class="head page">
+  <div><a href="/sources" class="muted">← Sources</a><h1>{{ s.name }}</h1>
+    <div class="sub">{% for u in urls %}<a href="{{ u }}" target="_blank" rel="noopener">{{ u }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+  <div class="row">
+    {% if indexing %}<span class="badge downloading" data-reload-when-idle>indexing…</span>{% else %}
+    <form method="post" action="/sources/{{ s.id }}/index"><button class="sm">Check now</button></form>{% endif %}
+    <form method="post" action="/sources/{{ s.id }}/queue-all"><button class="sm ghost">Queue all pending/failed</button></form>
+  </div>
+</div>
+{% if s.last_error %}<div class="banner bad">{{ s.last_error }}</div>{% endif %}
+
+<div class="tabs">
+  <a href="?" class="{{ 'on' if not status }}">All <small>{{ counts.values()|sum }}</small></a>
+  {% for st in ['queued','downloaded','pending','failed','skipped','deleted'] if counts.get(st) %}
+  <a href="?status={{ st }}" class="{{ 'on' if status == st }}">{{ st }} <small>{{ counts[st] }}</small></a>
+  {% endfor %}
+</div>
+<section class="card">
+  {% if media %}<table class="list"><tbody>{% for m in media %}{{ media_row(m, false) }}{% endfor %}</tbody></table>
+  {% else %}<p class="muted">{{ 'Indexing — videos will appear shortly.' if indexing else 'No videos found yet.' }}</p>{% endif %}
+</section>
+
+<details class="card">
+  <summary><h2>Settings</h2></summary>
+  <form method="post" action="/sources/{{ s.id }}/edit" class="grid">
+    <label>Name <input name="name" value="{{ s.name }}" required></label>
+    <label class="wide">URL <input name="url" value="{{ s.url }}" required></label>
+    <label>Type <select name="kind">{% for k in ['channel','playlist','video','feed'] %}<option {{ 'selected' if s.kind == k }}>{{ k }}</option>{% endfor %}</select></label>
+    <label>Profile <select name="profile_id">{% for p in profiles %}<option value="{{ p.id }}" {{ 'selected' if p.id == s.profile_id }}>{{ p.name }}</option>{% endfor %}</select></label>
+    <label>Check every (hours) <input name="interval_hours" type="number" step="0.5" min="0.5" value="{{ s.interval_hours }}"></label>
+    <label>Only newest N <input name="max_items" type="number" min="0" value="{{ s.max_items }}"></label>
+    <label>Skip uploads before <input name="download_after" type="date" value="{{ s.download_after }}"></label>
+    <label>Title must match (regex) <input name="title_filter" value="{{ s.title_filter }}"></label>
+    <label>Title must not match (regex) <input name="title_exclude" value="{{ s.title_exclude }}" placeholder="#shorts|trailer"></label>
+    <label>Minimum length (seconds) <input name="min_duration" type="number" min="0" value="{{ s.min_duration }}"></label>
+    <label>Delete downloads after (days) <input name="keep_days" type="number" min="0" value="{{ s.keep_days }}" title="0 = keep forever"></label>
+    <div class="wide checks">
+      <label><input type="checkbox" name="enabled" {{ 'checked' if s.enabled }}> Enabled (scheduled checks)</label>
+      <label><input type="checkbox" name="auto_download" {{ 'checked' if s.auto_download }}> Auto-download new videos</label>
+      <label><input type="checkbox" name="include_shorts" {{ 'checked' if s.include_shorts }}> Include Shorts</label>
+      <label><input type="checkbox" name="include_live" {{ 'checked' if s.include_live }}> Include past livestreams</label>
+    </div>
+    <div class="wide row"><button>Save</button></div>
+  </form>
+  <form method="post" action="/sources/{{ s.id }}/delete" class="row danger" data-confirm="Delete this source?">
+    <label><input type="checkbox" name="files"> also delete its downloaded files</label>
+    <button class="sm bad">Delete source</button>
+  </form>
+</details>
+{% endblock %}

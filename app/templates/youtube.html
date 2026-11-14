@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}YouTube sign-in · Dailies{% endblock %}
+{% block body %}
+{% if msg %}<div class="banner {{ 'ok' if ok == '1' else ('bad' if ok == '0' else '') }}">{{ msg }}</div>{% endif %}
+
+<section class="card">
+  <div class="head">
+    <h2>YouTube account</h2>
+    <span class="badge {{ 'downloaded' if auth.signed_in else 'failed' }}">{{ 'signed in' if auth.signed_in else 'not signed in' }}</span>
+  </div>
+  <p>{{ auth.detail }}{% if auth.signed_in and auth.expires %} Login cookie expires {{ auth.expires }}.{% endif %}</p>
+  <form method="post" action="/youtube/mode" class="row modes">
+    <span class="muted">yt-dlp uses:</span>
+    {% for m, label in [('browser','Built-in Chromium'),('file','cookies.txt'),('none','No account')] %}
+    <label class="pill"><input type="radio" name="mode" value="{{ m }}" {{ 'checked' if auth.mode == m }} onchange="this.form.submit()"> {{ label }}</label>
+    {% endfor %}
+  </form>
+  <div class="row">
+    <form method="post" action="/youtube/verify"><button class="sm" {{ 'disabled' if auth.mode == 'none' }}>Test with YouTube</button></form>
+    {% if auth.mode == 'browser' and auth.signed_in %}<a class="button sm ghost" href="/youtube/cookies.txt">Export cookies.txt</a>{% endif %}
+    <form method="post" action="/youtube/signout" data-confirm="Delete the browser profile and any cookies.txt? You'll need to sign in again."><button class="sm bad">Sign out</button></form>
+  </div>
+</section>
+
+<section class="card">
+  <div class="head"><h2>Sign in with Chromium</h2>
+    {% if auth.running %}
+    <form method="post" action="/youtube/browser/stop"><button>Done — close browser &amp; save</button></form>
+    {% else %}
+    <form method="post" action="/youtube/browser/start"><button {{ 'disabled' if not (auth.available.values()|min) }}>{{ 'Open browser' if not auth.signed_in else 'Open browser again' }}</button></form>
+    {% endif %}
+  </div>
+  {% if auth.running %}
+  <div class="vnc"><iframe src="/novnc/vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;show_dot=1&amp;path=vnc/ws" title="Sign-in browser" allow="clipboard-read; clipboard-write"></iframe></div>
+  <p class="muted">This is a real Chromium running inside the Dailies container. Sign in to Google normally (2-step verification works), make sure YouTube shows your avatar, then press <b>Done</b>. Your password goes only to Google — Dailies just keeps the browser profile in <code>/config/browser</code>, and yt-dlp reads its cookies.</p>
+  {% else %}
+  <ol class="muted steps">
+    <li>Press <b>Open browser</b> — a Chromium window appears right here.</li>
+    <li>Sign in to your Google account and open YouTube.</li>
+    <li>Press <b>Done</b>. Dailies now downloads as you: age-restricted, members-only, private playlists, Watch Later and Liked videos.</li>
+  </ol>
+  <p class="muted">Tip: use a secondary Google account if you archive heavily — YouTube can rate-limit accounts that download a lot.</p>
+  {% if not (auth.available.values()|min) %}<p class="err">Browser components missing here: {% for k, v in auth.available.items() if not v %}{{ k }} {% endfor %}— use the Docker image.</p>{% endif %}
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Or upload cookies.txt</h2>
+  <p class="muted">Export YouTube cookies from a desktop browser with a “Get cookies.txt” extension (from a private window you then close, so they don't rotate). {% if has_file %}A cookies.txt is already saved.{% endif %}</p>
+  <form method="post" action="/youtube/cookies" enctype="multipart/form-data" class="row">
+    <input type="file" name="file" accept=".txt,text/plain" required>
+    <button class="sm">Upload</button>
+  </form>
+</section>
+{% endblock %}

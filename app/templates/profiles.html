@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Profiles · Dailies{% endblock %}
+{% macro form(p) %}
+<form method="post" action="/profiles" class="grid">
+  {% if p %}<input type="hidden" name="id" value="{{ p.id }}">{% endif %}
+  <label>Name <input name="name" value="{{ p.name if p }}" required></label>
+  <label>Quality <select name="quality">{% for qn in qualities %}<option value="{{ qn }}" {{ 'selected' if p and p.quality == qn }}>{{ {'best':'Best available','audio':'Audio only'}.get(qn, qn ~ 'p max') }}</option>{% endfor %}</select></label>
+  <label>Container <select name="container">{% for c in ['mp4','mkv','webm','m4a','mp3','opus'] %}<option {{ 'selected' if p and p.container == c }}>{{ c }}</option>{% endfor %}</select></label>
+  <label class="wide">Output template <input name="output" value="{{ p.output if p else '{source}/%(upload_date>%Y-%m-%d)s - %(title)s [%(id)s].%(ext)s' }}">
+    <small>Relative to /downloads. <code>{source}</code> = source name; other fields are <a href="https://github.com/yt-dlp/yt-dlp#output-template" target="_blank" rel="noopener">yt-dlp output fields</a>.</small></label>
+  <label>Subtitle languages <input name="subtitles" value="{{ p.subtitles if p }}" placeholder="en,es — blank = none"></label>
+  <label>SponsorBlock remove <input name="sponsorblock" value="{{ p.sponsorblock if p }}" placeholder="sponsor,selfpromo,intro"></label>
+  <div class="wide checks">
+    {% for k, label in [('prefer_h264','Prefer H.264/AAC (best compatibility)'),('embed_thumbnail','Embed thumbnail'),('write_thumbnail','Save thumbnail .jpg'),('write_nfo','Write .nfo (Jellyfin/Plex/Kodi)'),('embed_metadata','Embed metadata'),('embed_chapters','Embed chapters'),('auto_subs','Include auto-generated subs')] %}
+    <label><input type="checkbox" name="{{ k }}" {{ 'checked' if (p[k] if p else k != 'auto_subs') }}> {{ label }}</label>
+    {% endfor %}
+  </div>
+  <div class="wide row"><button>{{ 'Save' if p else 'Add profile' }}</button></div>
+</form>
+{% endmacro %}
+{% block body %}
+<p class="muted">A profile decides quality, format and file layout. Each source uses one.</p>
+{% for p in profiles %}
+<details class="card">
+  <summary><h2>{{ p.name }}</h2><span class="muted">{{ p.quality }} · {{ p.container }} · {{ used.get(p.id, 0) }} source(s)</span></summary>
+  {{ form(p) }}
+  {% if not used.get(p.id) %}<form method="post" action="/profiles/{{ p.id }}/delete" data-confirm="Delete profile?" class="row danger"><button class="sm bad">Delete profile</button></form>{% endif %}
+</details>
+{% endfor %}
+<details class="card"><summary><h2>+ New profile</h2></summary>{{ form(none) }}</details>
+{% endblock %}

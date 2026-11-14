@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Settings · Dailies{% endblock %}
+{% block body %}
+<section class="card">
+  <h2>Downloads</h2>
+  <form method="post" action="/settings" class="grid">
+    <label>Rate limit <input name="rate_limit" value="{{ s.rate_limit }}" placeholder="e.g. 5M — blank = unlimited"></label>
+    <label>Pause between downloads (s) <input name="sleep_seconds" type="number" min="0" value="{{ s.sleep_seconds }}"></label>
+    <label>Retries <input name="retries" type="number" min="0" value="{{ s.retries }}"></label>
+    <label>Proxy <input name="proxy" value="{{ s.proxy }}" placeholder="socks5://host:1080"></label>
+    <div class="wide checks"><label><input type="checkbox" name="scheduler" {{ 'checked' if s.scheduler == '1' }}> Check sources on their schedule</label></div>
+    <div class="wide row"><button>Save</button></div>
+  </form>
+  <p class="muted">Files are saved under <code>{{ downloads }}</code>. yt-dlp {{ ytdlp }} — set <code>YTDLP_AUTO_UPDATE=1</code> (default) and restart the container to update it.</p>
+</section>
+<section class="card">
+  <h2>Activity log</h2>
+  <div class="log">{% for l in log %}<div class="{{ l.level }}"><time>{{ l.at }}</time> {{ l.message }}</div>{% else %}<p class="muted">Empty.</p>{% endfor %}</div>
+</section>
+{% endblock %}
