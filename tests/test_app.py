@@ -155,3 +155,26 @@ def test_password(client, monkeypatch):
     assert client.get("/", follow_redirects=False).status_code == 303
     client.post("/login", data={"password": "pw"})
     assert client.get("/", follow_redirects=False).status_code == 200
+
+
+def _fake_bin(d, name, body):
+    p = d / name
+    p.write_text("#!/bin/sh\n" + body + "\n")
+    p.chmod(0o755)
+
+
+def test_browser_failure_is_reported(client, monkeypatch, tmp_path):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    _fake_bin(bindir, "Xvfb", 'echo "Fatal server error: no screens found" >&2; exit 1')
+    _fake_bin(bindir, "x11vnc", "sleep 30")
+    _fake_bin(bindir, "chromium", "sleep 30")
+    novnc = tmp_path / "novnc"
+    novnc.mkdir()
+    monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
+    monkeypatch.setenv("NOVNC_DIR", str(novnc))
+    r = client.post("/youtube/browser/start", follow_redirects=False)
+    from urllib.parse import unquote_plus
+    loc = unquote_plus(r.headers["location"])
+    assert "ok=0" in loc and "xvfb exited with code 1" in loc and "no screens found" in loc
+    assert not browser.running()

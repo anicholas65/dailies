@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}YouTube sign-in · Dailies{% endblock %}
 {% block body %}
-{% if msg %}<div class="banner {{ 'ok' if ok == '1' else ('bad' if ok == '0' else '') }}">{{ msg }}</div>{% endif %}
+{% if msg %}<div class="banner {{ 'ok' if ok == '1' else ('bad' if ok == '0' else '') }}" style="white-space:pre-wrap">{{ msg }}</div>{% endif %}
 
 <section class="card">
   <div class="head">
@@ -43,6 +43,11 @@
   {% if not (auth.available.values()|min) %}<p class="err">Browser components missing here: {% for k, v in auth.available.items() if not v %}{{ k }} {% endfor %}— use the Docker image.</p>{% endif %}
   {% endif %}
 </section>
+
+<details class="card">
+  <summary><h2>Browser diagnostics</h2><span class="muted">{% for n, st in diag.procs.items() %}{{ n }}: {{ st }}{% if not loop.last %} · {% endif %}{% endfor %} · VNC port {{ 'open' if diag.vnc_port else 'closed' }}</span></summary>
+  {% for n, text in diag.logs.items() %}<h3 class="muted">{{ n }}.log</h3><pre class="log">{{ text or '(empty)' }}</pre>{% endfor %}
+</details>
 
 <section class="card">
   <h2>Or upload cookies.txt</h2>

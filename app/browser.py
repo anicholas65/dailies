@@ -56,8 +56,36 @@ def running() -> bool:
 
 
 def _spawn(name: str, args: list[str], env: dict):
-    log = open(config.CONFIG_DIR / f"{name}.log", "ab")
+    log = open(config.CONFIG_DIR / f"{name}.log", "wb")  # fresh log each start
     _procs[name] = subprocess.Popen(args, env=env, stdout=log, stderr=log, start_new_session=True)
+
+
+def log_tail(name: str, lines: int = 12) -> str:
+    try:
+        text = (config.CONFIG_DIR / f"{name}.log").read_text(errors="replace")
+    except OSError:
+        return ""
+    return "\n".join(text.strip().splitlines()[-lines:])
+
+
+def _wait(name: str, ready, timeout: float):
+    """Wait until ready() is true; fail loudly if the process dies or it takes too long."""
+    end = time.time() + timeout
+    while time.time() < end:
+        proc = _procs[name]
+        if proc.poll() is not None:
+            raise RuntimeError(f"{name} exited with code {proc.returncode}: {log_tail(name) or 'no output'}")
+        if ready():
+            return
+        time.sleep(0.2)
+    raise RuntimeError(f"{name} did not start within {timeout:.0f}s: {log_tail(name) or 'no output'}")
+
+
+def _port_open(port: int) -> bool:
+    import socket
+    with socket.socket() as s:
+        s.settimeout(0.3)
+        return s.connect_ex(("127.0.0.1", port)) == 0
 
 
 def _clear_stale_locks():
@@ -81,25 +109,43 @@ def start(url: str = GOOGLE_SIGNIN):
         _clear_stale_locks()
         env = dict(os.environ, DISPLAY=config.DISPLAY, HOME=str(config.CONFIG_DIR))
         w, h = config.SCREEN.split("x")
-        lock = Path(f"/tmp/.X{config.DISPLAY.lstrip(':')}-lock")
-        lock.unlink(missing_ok=True)
-        _spawn("xvfb", ["Xvfb", config.DISPLAY, "-screen", "0", f"{w}x{h}x24", "-nolisten", "tcp"], env)
-        time.sleep(1.0)
-        _spawn("x11vnc", ["x11vnc", "-display", config.DISPLAY, "-rfbport", str(config.VNC_PORT),
-                          "-localhost", "-nopw", "-forever", "-shared", "-quiet", "-noxdamage"], env)
-        _spawn("chromium", [
-            chromium_binary(),
-            f"--user-data-dir={config.BROWSER_PROFILE}",
-            "--password-store=basic",
-            "--no-sandbox",               # containers lack the user namespaces Chromium's sandbox needs
-            "--disable-dev-shm-usage",
-            "--no-first-run", "--no-default-browser-check",
-            "--disable-features=Translate,MediaRouter",
-            "--window-position=0,0", f"--window-size={w},{h}",
-            "--start-maximized",
-            url,
-        ], env)
+        num = config.DISPLAY.lstrip(":")
+        Path(f"/tmp/.X{num}-lock").unlink(missing_ok=True)
+        Path(f"/tmp/.X11-unix/X{num}").unlink(missing_ok=True)
+        try:
+            _spawn("xvfb", ["Xvfb", config.DISPLAY, "-screen", "0", f"{w}x{h}x24", "-nolisten", "tcp", "-ac"], env)
+            _wait("xvfb", lambda: Path(f"/tmp/.X11-unix/X{num}").exists(), 10)
+            _spawn("x11vnc", ["x11vnc", "-display", config.DISPLAY, "-rfbport", str(config.VNC_PORT),
+                              "-localhost", "-nopw", "-forever", "-shared", "-noxdamage"], env)
+            _wait("x11vnc", lambda: _port_open(config.VNC_PORT), 15)
+            _spawn("chromium", [
+                chromium_binary(),
+                f"--user-data-dir={config.BROWSER_PROFILE}",
+                "--password-store=basic",
+                "--no-sandbox",               # containers lack the user namespaces Chromium's sandbox needs
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--no-first-run", "--no-default-browser-check",
+                "--disable-features=Translate,MediaRouter",
+                "--window-position=0,0", f"--window-size={w},{h}",
+                "--start-maximized",
+                url,
+            ], env)
+            started = time.time()
+            _wait("chromium", lambda: time.time() - started > 3, 10)  # survives startup
+        except Exception as exc:
+            stop_locked()
+            db.log("error", f"Sign-in browser failed: {exc}")
+            raise RuntimeError(str(exc)) from exc
         db.log("info", "Sign-in browser started")
+
+
+def diagnostics() -> dict:
+    procs = {n: ("running" if (p := _procs.get(n)) and p.poll() is None
+                 else ("not started" if p is None else f"exited ({p.returncode})"))
+             for n in ("xvfb", "x11vnc", "chromium")}
+    return {"procs": procs, "vnc_port": _port_open(config.VNC_PORT),
+            "logs": {n: log_tail(n, 40) for n in ("xvfb", "x11vnc", "chromium")}}
 
 
 def stop_locked():

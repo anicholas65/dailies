@@ -313,7 +313,8 @@ def delete_profile(pid: int):
 
 @app.get("/youtube", response_class=HTMLResponse)
 def youtube(request: Request, msg: str = "", ok: str = ""):
-    return page(request, "youtube.html", msg=msg, ok=ok, has_file=config.COOKIES_FILE.exists())
+    return page(request, "youtube.html", msg=msg, ok=ok, has_file=config.COOKIES_FILE.exists(),
+                diag=browser.diagnostics())
 
 
 @app.post("/youtube/browser/start")
@@ -321,7 +322,7 @@ def browser_start():
     try:
         browser.start()
     except RuntimeError as exc:
-        return yt(str(exc))
+        return yt(f"Couldn't start the sign-in browser: {exc}"[:1500], False)
     db.set_setting("auth_mode", "browser")
     return back("/youtube")
 
