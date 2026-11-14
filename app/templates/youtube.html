@@ -32,6 +32,7 @@
   </div>
   {% if auth.running %}
   <div class="vnc"><iframe src="/novnc/vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;show_dot=1&amp;path=/vnc/ws" title="Sign-in browser" allow="clipboard-read; clipboard-write"></iframe></div>
+  <div class="banner warn"><b>Passkeys and security keys can't work here.</b> This browser runs on your server, which has no fingerprint reader, phone pairing or USB key. When Google asks for a passkey, click <b>Try another way</b> and pick <b>Enter your password</b>, then approve the prompt on your phone or enter a 2-step code. No password on your account? Use the cookies.txt option below from a desktop browser instead.</div>
   <p class="muted">This is a real Chromium running inside the Dailies container. Sign in to Google normally (2-step verification works), make sure YouTube shows your avatar, then press <b>Done</b>. Your password goes only to Google — Dailies just keeps the browser profile in <code>/config/browser</code>, and yt-dlp reads its cookies.</p>
   {% else %}
   <ol class="muted steps">
