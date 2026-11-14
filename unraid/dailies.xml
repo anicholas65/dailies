@@ -20,7 +20,7 @@
   <ExtraParams>--shm-size=512m</ExtraParams>
   <Config Name="WebUI Port" Target="8945" Default="8945" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8945</Config>
   <Config Name="Config" Target="/config" Default="/mnt/user/appdata/dailies" Mode="rw" Description="Database, Chromium sign-in profile, cookies" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/dailies</Config>
-  <Config Name="Downloads" Target="/downloads" Default="/mnt/user/data/media/youtube" Mode="rw" Description="Where videos are saved" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/data/media/youtube</Config>
+  <Config Name="Downloads" Target="/downloads" Default="/mnt/user/Data/Media/YouTube" Mode="rw" Description="Where videos are saved" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Data/Media/YouTube</Config>
   <Config Name="Web UI password" Target="DAILIES_PASSWORD" Default="" Mode="" Description="Optional but recommended: the web UI controls a browser signed in to your Google account" Type="Variable" Display="always" Required="false" Mask="true"></Config>
   <Config Name="Auto-update yt-dlp" Target="YTDLP_AUTO_UPDATE" Default="1" Mode="" Description="1 = fetch the newest yt-dlp on every container start" Type="Variable" Display="advanced" Required="false" Mask="false">1</Config>
   <Config Name="Browser screen size" Target="DAILIES_SCREEN" Default="1280x800" Mode="" Description="Resolution of the sign-in browser" Type="Variable" Display="advanced" Required="false" Mask="false">1280x800</Config>
