@@ -1,17 +1,18 @@
 {% extends "base.html" %}
 {% from "_macros.html" import media_row %}
-{% block title %}Media · Dailies{% endblock %}
+{% block title %}Library · Dailies{% endblock %}
 {% block body %}
+<div class="head page"><h1>Library</h1>
+{% if counts.get('downloaded') %}<form method="post" action="/media/refresh-all" data-confirm="Rename files to the profile's current layout and rewrite thumbnails, NFOs and tags from YouTube? Nothing is re-downloaded."><button class="sm ghost">Rename &amp; refresh all files</button></form>{% endif %}</div>
 <form class="row filter" method="get">
   <input name="q" value="{{ q }}" placeholder="Search titles">
   <select name="status" onchange="this.form.submit()"><option value="">All statuses</option>
     {% for st in ['queued','downloading','downloaded','pending','failed','skipped','deleted'] %}<option {{ 'selected' if status == st }} value="{{ st }}">{{ st }} ({{ counts.get(st, 0) }})</option>{% endfor %}
   </select>
-  <button class="sm">Filter</button>
+  <button class="sm">Search</button>
 </form>
-{% if counts.get('downloaded') %}<div class="row"><form method="post" action="/media/refresh-all" data-confirm="Rename files to the profile's current layout and rewrite thumbnails, NFOs and tags from YouTube? Nothing is re-downloaded."><button class="sm ghost">Rename &amp; refresh all files</button></form></div>{% endif %}
-<section class="card">
-  {% if media %}<table class="list"><tbody>{% for m in media %}{{ media_row(m) }}{% endfor %}</tbody></table>
+<section class="block">
+  {% if media %}<div class="sheet">{% for m in media %}{{ media_row(m) }}{% endfor %}</div>
   {% else %}<p class="muted">Nothing here.</p>{% endif %}
 </section>
 {% endblock %}

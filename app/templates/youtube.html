@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}YouTube sign-in · Dailies{% endblock %}
 {% block body %}
+<h1>YouTube</h1>
+<p class="lede">Sign in so Dailies downloads as you, with access to your private, members-only and age-restricted videos.</p>
 {% if msg %}<div class="banner {{ 'ok' if ok == '1' else ('bad' if ok == '0' else '') }}" style="white-space:pre-wrap">{{ msg }}</div>{% endif %}
 
 <section class="card">

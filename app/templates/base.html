@@ -7,16 +7,16 @@
 <link rel="stylesheet" href="/static/style.css?v={{ version }}">
 </head>
 <body>
-<header class="top">
+<header class="top" role="banner">
   <a class="brand" href="/"><img src="/static/icon.svg" alt=""> Dailies</a>
   <nav>
-    {% for key, label, href in [('dashboard','Dashboard','/'),('sources','Sources','/sources'),('source','',''),('media','Media','/media'),('profiles','Profiles','/profiles'),('youtube','YouTube','/youtube'),('settings','Settings','/settings')] if label %}
+    {% for key, label, href in [('dashboard','Today','/'),('media','Library','/media'),('sources','Sources','/sources'),('source','',''),('profiles','Profiles','/profiles'),('youtube','YouTube','/youtube'),('settings','Settings','/settings')] if label %}
     <a href="{{ href }}" class="{{ 'on' if nav == key or (key == 'sources' and nav == 'source') }}">{{ label }}{% if key == 'youtube' and auth is defined and auth %}<i class="dot {{ 'ok' if auth.signed_in else 'bad' }}"></i>{% endif %}</a>
     {% endfor %}
   </nav>
 </header>
 <main>{% block body %}{% endblock %}</main>
-<footer>Dailies {{ version }} · yt-dlp powered</footer>
+<footer>Dailies {{ version }}, downloading with yt-dlp</footer>
 <script src="/static/app.js?v={{ version }}"></script>
 </body>
 </html>

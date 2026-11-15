@@ -332,7 +332,7 @@ def test_media_list_shows_thumbnail_and_channel(client):
     db.run("INSERT INTO media(source_id, video_id, title, url, channel) VALUES (?, 'abc123', 't', 'u', 'Greg')", (sid,))
     html = client.get("/media").text
     assert "https://i.ytimg.com/vi/abc123/mqdefault.jpg" in html
-    assert "Greg · Some Video" in html
+    assert "Greg in <a href=\"/sources/1\">Some Video</a>" in html
 
 
 def test_legacy_template_migrates(client):

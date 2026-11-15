@@ -1,40 +1,42 @@
 {% extends "base.html" %}
 {% from "_macros.html" import media_row %}
 {% block body %}
+{% set queued = counts.get('queued', 0) + counts.get('downloading', 0) %}
+<h1>Today</h1>
+<p class="lede">
+  <a href="/media?status=downloaded">{{ counts.get('downloaded', 0) }} video{{ '' if counts.get('downloaded', 0) == 1 else 's' }}</a> in the library from
+  <a href="/sources">{{ sources }} source{{ '' if sources == 1 else 's' }}</a>.
+  {% if queued %}<a href="/media?status=queued">{{ queued }} in the queue</a>.{% else %}Nothing in the queue.{% endif %}
+  {% if counts.get('pending') %}<a href="/media?status=pending">{{ counts.pending }} waiting for you to choose</a>.{% endif %}
+  {% if counts.get('failed') %}<a class="bad" href="/media?status=failed">{{ counts.failed }} failed</a>.{% endif %}
+</p>
 {% if auth and not auth.signed_in %}
-<div class="banner warn">Not signed in to YouTube — age-restricted, members-only and private videos will fail, and YouTube may ask for “Sign in to confirm you’re not a bot”. <a href="/youtube">Sign in →</a></div>
+<div class="banner warn">Dailies isn't signed in to YouTube. Age-restricted, members-only and private videos will fail, and YouTube may block downloads as a bot. <a href="/youtube">Sign in to YouTube</a></div>
 {% endif %}
-<div class="stats">
-  <a href="/sources" class="stat"><b>{{ sources }}</b><span>sources</span></a>
-  <a href="/media?status=downloaded" class="stat"><b>{{ counts.get('downloaded', 0) }}</b><span>downloaded</span></a>
-  <a href="/media?status=queued" class="stat"><b data-count="queued">{{ counts.get('queued', 0) + counts.get('downloading', 0) }}</b><span>in queue</span></a>
-  <a href="/media?status=pending" class="stat"><b>{{ counts.get('pending', 0) }}</b><span>pending</span></a>
-  <a href="/media?status=failed" class="stat {{ 'bad' if counts.get('failed') }}"><b>{{ counts.get('failed', 0) }}</b><span>failed</span></a>
-</div>
 
-<section class="card">
+<section class="block">
   <div class="head"><h2>Queue</h2>
     <div class="row">
-      {% if paused %}<form method="post" action="/queue/resume"><button class="sm">Resume</button></form><span class="badge failed">paused</span>{% if pause_reason %}<span class="err">{{ pause_reason }} <a href="/youtube">Sign in →</a></span>{% endif %}
-      {% else %}<form method="post" action="/queue/pause"><button class="sm ghost">Pause</button></form>{% endif %}
+      {% if paused %}<span class="badge failed">paused</span>{% if pause_reason %}<span class="err">{{ pause_reason }} <a href="/youtube">Sign in to YouTube</a></span>{% endif %}<form method="post" action="/queue/resume"><button class="sm">Resume queue</button></form>
+      {% else %}<form method="post" action="/queue/pause"><button class="sm ghost">Pause queue</button></form>{% endif %}
     </div>
   </div>
-  {% if refreshing %}<p class="muted">Renaming &amp; refreshing {{ refreshing }} file(s) after downloads finish…</p>{% endif %}
+  {% if refreshing %}<p class="muted">Renaming &amp; refreshing {{ refreshing }} file(s) after downloads finish.</p>{% endif %}
   {% if queue %}
-  <table class="list"><tbody>{% for m in queue %}{{ media_row(m) }}{% endfor %}</tbody></table>
-  {% else %}<p class="muted">Nothing queued. {% if not sources %}<a href="/sources">Add a channel or playlist</a> to get started.{% endif %}</p>{% endif %}
+  <div class="sheet">{% for m in queue %}{{ media_row(m) }}{% endfor %}</div>
+  {% else %}<p class="muted">Nothing queued. {% if not sources %}<a href="/sources">Add a channel or playlist</a> to start.{% endif %}</p>{% endif %}
 </section>
 
 {% if failed %}
-<section class="card">
+<section class="block">
   <div class="head"><h2>Recent failures</h2><form method="post" action="/media/retry-failed"><button class="sm">Retry all failed</button></form></div>
-  <table class="list"><tbody>{% for m in failed %}{{ media_row(m) }}{% endfor %}</tbody></table>
+  <div class="sheet">{% for m in failed %}{{ media_row(m) }}{% endfor %}</div>
 </section>
 {% endif %}
 
-<section class="card">
-  <h2>Recently downloaded</h2>
-  {% if recent %}<table class="list"><tbody>{% for m in recent %}{{ media_row(m) }}{% endfor %}</tbody></table>
+<section class="block">
+  <div class="head"><h2>Recently downloaded</h2>{% if recent %}<a class="back" href="/media?status=downloaded">Open the library</a>{% endif %}</div>
+  {% if recent %}<div class="sheet">{% for m in recent %}{{ media_row(m) }}{% endfor %}</div>
   {% else %}<p class="muted">No downloads yet.</p>{% endif %}
 </section>
 {% endblock %}

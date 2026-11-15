@@ -25,7 +25,8 @@
 </form>
 {% endmacro %}
 {% block body %}
-<p class="muted">A profile decides quality, format and file layout. Each source uses one.</p>
+<h1>Profiles</h1>
+<p class="lede">A profile decides quality, format and where files go. Each source uses one.</p>
 {% for p in profiles %}
 <details class="card">
   <summary><h2>{{ p.name }}</h2><span class="muted">{{ p.quality }} · {{ p.container }} · {{ used.get(p.id, 0) }} source(s)</span></summary>

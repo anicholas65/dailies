@@ -3,7 +3,7 @@
 {% block title %}{{ s.name }} · Dailies{% endblock %}
 {% block body %}
 <div class="head page">
-  <div><a href="/sources" class="muted">← Sources</a><h1>{{ s.name }}</h1>
+  <div><a href="/sources" class="back">All sources</a><h1>{{ s.name }}</h1>
     <div class="sub">{% for u in urls %}<a href="{{ u }}" target="_blank" rel="noopener">{{ u }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
   <div class="row">
     {% if indexing %}<span class="badge downloading" data-reload-when-idle>indexing…</span>{% else %}
@@ -20,8 +20,8 @@
   <a href="?status={{ st }}" class="{{ 'on' if status == st }}">{{ st }} <small>{{ counts[st] }}</small></a>
   {% endfor %}
 </div>
-<section class="card">
-  {% if media %}<table class="list"><tbody>{% for m in media %}{{ media_row(m, false) }}{% endfor %}</tbody></table>
+<section class="block">
+  {% if media %}<div class="sheet">{% for m in media %}{{ media_row(m, false) }}{% endfor %}</div>
   {% else %}<p class="muted">{{ 'Indexing — videos will appear shortly.' if indexing else 'No videos found yet.' }}</p>{% endif %}
 </section>
 
