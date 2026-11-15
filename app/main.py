@@ -296,8 +296,7 @@ async def save_profile(request: Request):
     form = await request.form()
     vals = await form_values(request, PROFILE_FIELDS, PROFILE_FLAGS)
     pid = form.get("id")
-    if not vals.get("output"):
-        vals.pop("output", None)
+    vals["output"] = vals.get("output", "")  # blank = default layout
     if vals.get("quality") not in ytdl.QUALITY_FORMATS:
         vals["quality"] = "1080"
     if vals["quality"] == "audio" and vals.get("container") not in ytdl.AUDIO_CODECS:

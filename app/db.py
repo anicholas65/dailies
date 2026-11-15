@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   quality TEXT NOT NULL DEFAULT '1080',      -- best|2160|1440|1080|720|480|audio
   container TEXT NOT NULL DEFAULT 'mp4',     -- mp4|mkv|webm ; audio: m4a|mp3|opus
   prefer_h264 INTEGER NOT NULL DEFAULT 1,
-  output TEXT NOT NULL DEFAULT '{source}/%(upload_date>%Y-%m-%d)s - %(title)s [%(id)s].%(ext)s',
+  output TEXT NOT NULL DEFAULT '',            -- blank = config.VIDEO_TEMPLATE / AUDIO_TEMPLATE
   embed_thumbnail INTEGER NOT NULL DEFAULT 1,
   write_thumbnail INTEGER NOT NULL DEFAULT 1,
   write_nfo INTEGER NOT NULL DEFAULT 1,
@@ -147,6 +147,8 @@ def init():
     config.ensure_dirs()
     with tx() as conn:
         conn.executescript(SCHEMA)
+        if "episode" not in {r[1] for r in conn.execute("PRAGMA table_info(media)")}:  # 0.1.6: Jellyfin episode no.
+            conn.execute("ALTER TABLE media ADD COLUMN episode INTEGER")
         cols = {r[1] for r in conn.execute("PRAGMA table_info(sources)")}
         if "auto_name" not in cols:  # 0.1.5: name the source from YouTube on first index
             conn.execute("ALTER TABLE sources ADD COLUMN auto_name INTEGER NOT NULL DEFAULT 0")
@@ -168,6 +170,10 @@ def init():
                     conn.execute("INSERT INTO profiles(name, quality, container, write_nfo) VALUES (?, ?, ?, ?)",
                                  (name, quality, container, nfo))
             conn.execute("INSERT INTO settings(key, value) VALUES ('presets_v2', '1')")
+        # 0.1.6: profiles still on the old default move to the Jellyfin layout; blank = default
+        if not conn.execute("SELECT 1 FROM settings WHERE key='jellyfin_layout'").fetchone():
+            conn.execute("UPDATE profiles SET output='' WHERE output=?", (config.LEGACY_TEMPLATE,))
+            conn.execute("INSERT INTO settings(key, value) VALUES ('jellyfin_layout', '1')")
         # downloads interrupted by a restart go back to the queue
         conn.execute("UPDATE media SET status='queued' WHERE status='downloading'")
 

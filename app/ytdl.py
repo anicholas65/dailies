@@ -36,7 +36,7 @@ class Quiet:
         pass
 
     def warning(self, msg):
-        if any(k in msg for k in ("nsig", "Falling back", "falling back", "No title found")):
+        if any(k in msg for k in ("nsig", "Falling back", "falling back", "No title found", "--paths is ignored")):
             return
         db.log("warn", msg)
 
@@ -96,11 +96,13 @@ def parse_rate(text: str) -> int | None:
 def profile_opts(profile, source) -> dict:
     audio = profile["quality"] == "audio"
     folder = config.DOWNLOADS_DIR
-    template = profile["output"].replace("{source}", safe_name(source["name"]))
+    template = (profile["output"] or (config.AUDIO_TEMPLATE if audio else config.VIDEO_TEMPLATE))
+    template = template.replace("{source}", safe_name(source["name"]))
     opts = {
         "format": QUALITY_FORMATS.get(profile["quality"], QUALITY_FORMATS["best"]),
         "outtmpl": {"default": str(folder / template),
-                    "thumbnail": str(folder / template.rsplit(".", 1)[0]) + ".%(ext)s"},
+                    # Jellyfin/Kodi episode image: <video name>-thumb.jpg (audio: <name>.jpg, cover art)
+                    "thumbnail": str(folder / template.rsplit(".", 1)[0]) + ("." if audio else "-thumb.") + "%(ext)s"},
         "paths": {"temp": str(config.CONFIG_DIR / "tmp")},
         "windowsfilenames": True,
         "writethumbnail": bool(profile["embed_thumbnail"] or profile["write_thumbnail"]),
@@ -271,11 +273,13 @@ def download(media_id: int) -> str:
                 db.run("UPDATE media SET status='skipped', error=?, title=?, upload_date=? WHERE id=?",
                        (reason, info.get("title") or item["title"], info.get("upload_date"), media_id))
                 return "skipped"
+            info.update(episode_fields(media_id, source, info))
             info = ydl.process_ie_result(info, download=True)
             path = final_path(info)
+            if path and profile["write_nfo"] and profile["quality"] != "audio":
+                write_nfo(Path(path), info, source)
+                write_show_files(show_dir(Path(path)), source, info, ydl)
         size = Path(path).stat().st_size if path and Path(path).exists() else None
-        if path and profile["write_nfo"]:
-            write_nfo(Path(path), info, source)
         db.run("UPDATE media SET status='downloaded', filepath=?, filesize=?, title=?, upload_date=?, duration=?, "
                "downloaded=datetime('now') WHERE id=?",
                (path, size, info.get("title") or item["title"], info.get("upload_date"),
@@ -312,23 +316,96 @@ def final_path(info) -> str | None:
     return info.get("filepath") or info.get("_filename")
 
 
+def episode_fields(media_id: int, source, info) -> dict:
+    """Season = upload year, episode = MMDDnn (nn = 01, 02... in the order videos from that day are
+    downloaded). Assigned once and stored, so re-downloads keep their number.
+    Not season_number/episode_number: MP4 stores those as 8-bit, so 2026 would embed as 234."""
+    date = info.get("upload_date") or dt.date.today().strftime("%Y%m%d")
+    base = int(date[4:8]) * 100
+    with db.tx() as conn:
+        ep = conn.execute("SELECT episode FROM media WHERE id=?", (media_id,)).fetchone()["episode"]
+        if not ep or ep // 100 != base // 100:
+            last = conn.execute("SELECT MAX(episode) FROM media WHERE source_id=? AND episode BETWEEN ? AND ? "
+                                "AND substr(upload_date, 1, 4)=? AND id!=?",
+                                (source["id"], base, base + 99, date[:4], media_id)).fetchone()[0]
+            ep = min((last or base) + 1, base + 99)
+        conn.execute("UPDATE media SET upload_date=?, episode=? WHERE id=?", (date, ep, media_id))
+    return {"series": source["name"], "dailies_season": int(date[:4]), "dailies_episode": ep}
+
+
+def show_dir(path: Path) -> Path:
+    return path.parent.parent if re.fullmatch(r"Season \d+", path.parent.name) else path.parent
+
+
+def _aired(date: str | None) -> str:
+    return f"{date[:4]}-{date[4:6]}-{date[6:]}" if date and len(date) == 8 else ""
+
+
 def write_nfo(path: Path, info, source):
-    """Kodi/Jellyfin episode NFO next to the media file."""
+    """Jellyfin/Kodi episode NFO next to the media file."""
     e = lambda v: html.escape(str(v or ""))  # noqa: E731
-    date = info.get("upload_date") or ""
-    aired = f"{date[:4]}-{date[4:6]}-{date[6:]}" if len(date) == 8 else ""
+    aired = _aired(info.get("upload_date"))
+    tags = "".join(f"  <tag>{e(t)}</tag>\n" for t in (info.get("tags") or [])[:20])
+    genres = "".join(f"  <genre>{e(g)}</genre>\n" for g in info.get("categories") or [])
     body = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<episodedetails>\n'
         f"  <title>{e(info.get('title'))}</title>\n"
         f"  <showtitle>{e(source['name'])}</showtitle>\n"
+        f"  <season>{e(info.get('dailies_season'))}</season>\n"
+        f"  <episode>{e(info.get('dailies_episode'))}</episode>\n"
         f"  <plot>{e(info.get('description'))}</plot>\n"
         f"  <aired>{aired}</aired>\n  <premiered>{aired}</premiered>\n"
         f"  <studio>{e(info.get('uploader') or info.get('channel'))}</studio>\n"
         f"  <runtime>{int((info.get('duration') or 0) // 60)}</runtime>\n"
+        f"{genres}{tags}"
         f"  <uniqueid type=\"youtube\" default=\"true\">{e(info.get('id'))}</uniqueid>\n"
         "</episodedetails>\n"
     )
     path.with_suffix(".nfo").write_text(body, encoding="utf-8")
+
+
+def write_show_files(folder: Path, source, info, ydl):
+    """tvshow.nfo + poster.jpg (channel avatar) + fanart.jpg (channel banner), once per show folder."""
+    e = lambda v: html.escape(str(v or ""))  # noqa: E731
+    art = {"poster.jpg": "avatar_uncropped", "fanart.jpg": "banner_uncropped"}
+    missing = [n for n in art if not (folder / n).exists()]
+    if (folder / "tvshow.nfo").exists() and not missing:
+        return
+    channel = {}
+    if url := info.get("channel_url"):
+        try:
+            channel = ydl.extract_info(url, download=False, process=False) or {}
+        except Exception as exc:  # artwork is nice-to-have
+            db.log("warn", f"Channel artwork for {source['name']}: {clean_error(exc)[:200]}")
+    if not (folder / "tvshow.nfo").exists():
+        plot = channel.get("description") if source["kind"] == "channel" else None
+        (folder / "tvshow.nfo").write_text(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<tvshow>\n'
+            f"  <title>{e(source['name'])}</title>\n"
+            f"  <plot>{e(plot or channel.get('description'))}</plot>\n"
+            f"  <studio>{e(info.get('channel') or info.get('uploader'))}</studio>\n"
+            f"  <genre>YouTube</genre>\n"
+            f"  <uniqueid type=\"youtube\" default=\"true\">{e(info.get('channel_id'))}</uniqueid>\n"
+            "</tvshow>\n", encoding="utf-8")
+    thumbs = {t.get("id"): t.get("url") for t in channel.get("thumbnails") or []}
+    for name in missing:
+        if not (url := thumbs.get(art[name])):
+            continue
+        try:
+            data = ydl.urlopen(url).read()
+            (folder / name).write_bytes(to_jpeg(data))
+        except Exception as exc:
+            db.log("warn", f"{name} for {source['name']}: {clean_error(exc)[:200]}")
+
+
+def to_jpeg(data: bytes) -> bytes:
+    """YouTube art may be webp/png; Jellyfin wants what the name says."""
+    if data[:3] == b"\xff\xd8\xff":
+        return data
+    import subprocess
+    out = subprocess.run(["ffmpeg", "-v", "error", "-i", "pipe:0", "-frames:v", "1", "-f", "image2", "-c:v", "mjpeg",
+                          "-q:v", "2", "pipe:1"], input=data, capture_output=True, check=True)
+    return out.stdout
 
 
 def apply_retention():
@@ -347,7 +424,7 @@ def delete_files(item):
         return
     p = Path(item["filepath"])
     stem = p.with_suffix("")
-    for f in [p, *p.parent.glob(glob_escape(stem.name) + ".*")]:
+    for f in [p, *p.parent.glob(glob_escape(stem.name) + ".*"), *p.parent.glob(glob_escape(stem.name) + "-thumb.*")]:
         try:
             if f.is_file() and f.resolve().is_relative_to(config.DOWNLOADS_DIR.resolve()):
                 f.unlink()

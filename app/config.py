@@ -12,6 +12,11 @@ PASSWORD = os.environ.get("DAILIES_PASSWORD", "")  # optional web UI password
 DISPLAY = os.environ.get("DAILIES_DISPLAY", ":99")
 VNC_PORT = int(os.environ.get("DAILIES_VNC_PORT", "5900"))
 SCREEN = os.environ.get("DAILIES_SCREEN", "1280x800")
+# Output templates (relative to DOWNLOADS_DIR). Video: Jellyfin/Kodi TV layout, one show per source,
+# season = upload year, episode = MMDD + 2-digit order within the day (season/episode set in ytdl.download).
+VIDEO_TEMPLATE = "{source}/Season %(dailies_season)s/s%(dailies_season)se%(dailies_episode)06d - %(title)s [%(id)s].%(ext)s"
+AUDIO_TEMPLATE = "{source}/%(upload_date>%Y-%m-%d)s - %(title)s [%(id)s].%(ext)s"
+LEGACY_TEMPLATE = AUDIO_TEMPLATE  # default before 0.1.6
 SCHEDULER = os.environ.get("DAILIES_SCHEDULER", "1") != "0"
 
 

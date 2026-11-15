@@ -11,8 +11,9 @@
     <optgroup label="Video">{% for c in video_containers %}<option value="{{ c }}" {{ 'selected' if p and p.container == c }}>{{ c|upper }}</option>{% endfor %}</optgroup>
     <optgroup label="Audio only">{% for c in audio_codecs %}<option value="{{ c }}" {{ 'selected' if p and p.container == c }}>{{ c|upper }}{{ ' (lossless, large)' if c == 'wav' }}</option>{% endfor %}</optgroup>
   </select></label>
-  <label class="wide">Output template <input name="output" value="{{ p.output if p else '{source}/%(upload_date>%Y-%m-%d)s - %(title)s [%(id)s].%(ext)s' }}">
-    <small>Relative to /downloads. <code>{source}</code> = source name; other fields are <a href="https://github.com/yt-dlp/yt-dlp#output-template" target="_blank" rel="noopener">yt-dlp output fields</a>.</small></label>
+  <label class="wide">Output template <input name="output" value="{{ p.output if p }}" placeholder="blank = Jellyfin TV layout (video) / dated files (audio)">
+    <small>Blank: video goes to <code>{source}/Season 2026/s2026e052301 - Title [id].mp4</code> with -thumb.jpg, .nfo, and show tvshow.nfo/poster.jpg/fanart.jpg - add the folder to Jellyfin as a <b>Shows</b> library.
+    Custom: relative to /downloads, <code>{source}</code> = source name, <code>%(dailies_season)s</code>/<code>%(dailies_episode)s</code> = year / MMDDnn; other fields are <a href="https://github.com/yt-dlp/yt-dlp#output-template" target="_blank" rel="noopener">yt-dlp output fields</a>.</small></label>
   <label>Subtitle languages <input name="subtitles" value="{{ p.subtitles if p }}" placeholder="en,es — blank = none"></label>
   <label>SponsorBlock remove <input name="sponsorblock" value="{{ p.sponsorblock if p }}" placeholder="sponsor,selfpromo,intro"></label>
   <div class="wide checks">

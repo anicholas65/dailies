@@ -276,3 +276,35 @@ def test_blank_name_is_auto_named_on_index(client, monkeypatch):
     ytdl.index_source(b["id"])
     names = [r["name"] for r in db.q("SELECT name FROM sources ORDER BY id")]
     assert names == ["How I Vibe Coded a Recipe App", "Mine"]
+
+
+def test_jellyfin_layout(client):
+    from app import config
+    p = db.one("SELECT * FROM profiles WHERE name='1080p MP4'")
+    assert p["output"] == ""
+    sid = db.run("INSERT INTO sources(name, url, kind, profile_id) VALUES ('My: Chan', 'u', 'channel', ?)", (p["id"],))
+    m1 = db.run("INSERT INTO media(source_id, video_id, title, url) VALUES (?, 'a', 't', 'u')", (sid,))
+    m2 = db.run("INSERT INTO media(source_id, video_id, title, url) VALUES (?, 'b', 't', 'u')", (sid,))
+    src = db.one("SELECT * FROM sources WHERE id=?", (sid,))
+    d = {"upload_date": "20260523"}
+    assert ytdl.episode_fields(m2, src, d)["dailies_episode"] == 52301
+    assert ytdl.episode_fields(m1, src, d) == {"series": "My: Chan", "dailies_season": 2026, "dailies_episode": 52302}
+    assert ytdl.episode_fields(m2, src, d)["dailies_episode"] == 52301  # re-download keeps its number
+    m3 = db.run("INSERT INTO media(source_id, video_id, title, url) VALUES (?, 'c', 't', 'u')", (sid,))
+    assert ytdl.episode_fields(m3, src, {"upload_date": "20250523"})["dailies_episode"] == 52301  # other year
+    o = ytdl.profile_opts(p, src)
+    assert o["outtmpl"]["default"].endswith("My_ Chan/Season %(dailies_season)s/s%(dailies_season)se%(dailies_episode)06d - %(title)s [%(id)s].%(ext)s")
+    assert o["outtmpl"]["thumbnail"].endswith("[%(id)s]-thumb.%(ext)s")
+    a = ytdl.profile_opts(db.one("SELECT * FROM profiles WHERE name='Audio (MP3)'"), src)
+    assert a["outtmpl"]["default"].endswith(config.AUDIO_TEMPLATE.replace("{source}", "My_ Chan"))
+    from pathlib import Path
+    assert ytdl.show_dir(Path("/d/Chan/Season 2026/x.mp4")) == Path("/d/Chan")
+
+
+def test_legacy_template_migrates(client):
+    from app import config
+    db.run("UPDATE profiles SET output=? WHERE id=1", (config.LEGACY_TEMPLATE,))
+    db.run("DELETE FROM settings WHERE key='jellyfin_layout'")
+    db.reset()
+    db.init()
+    assert db.one("SELECT output FROM profiles WHERE id=1")["output"] == ""
