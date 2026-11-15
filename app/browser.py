@@ -21,8 +21,13 @@ from pathlib import Path
 
 from . import config, db
 
-GOOGLE_SIGNIN = ("https://accounts.google.com/ServiceLogin?service=youtube"
-                 "&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue")
+# The URL YouTube's own "Sign in" button uses. The bare action_handle_signin=true continue URL (without
+# app/next) lands on youtube.com/oops "There was an issue signing you into YouTube" when Google already
+# has a session, e.g. reopening the browser after an earlier sign-in.
+GOOGLE_SIGNIN = ("https://accounts.google.com/ServiceLogin?service=youtube&uilel=3&passive=true"
+                 "&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue"
+                 "%26app%3Ddesktop%26hl%3Den%26next%3Dhttps%253A%252F%252Fwww.youtube.com%252F")
+YOUTUBE_HOME = "https://www.youtube.com/"
 AUTH_COOKIES = {"LOGIN_INFO", "SAPISID", "__Secure-3PSID", "SID"}
 
 _lock = threading.Lock()
@@ -96,7 +101,13 @@ def _clear_stale_locks():
             path.unlink(missing_ok=True)
 
 
-def start(url: str = GOOGLE_SIGNIN):
+def start_url() -> str:
+    """YouTube itself when the profile is already signed in, else Google sign-in."""
+    return YOUTUBE_HOME if profile_signed_in() else GOOGLE_SIGNIN
+
+
+def start(url: str | None = None):
+    url = url or start_url()
     with _lock:
         if running():
             return
@@ -184,6 +195,15 @@ def wipe_profile():
 def browser_spec():
     """The ``cookiesfrombrowser`` tuple yt-dlp expects."""
     return ("chromium", str(config.BROWSER_PROFILE), "BASICTEXT", None)
+
+
+def profile_signed_in() -> bool:
+    """Whether the browser profile already holds YouTube sign-in cookies."""
+    try:
+        return has_profile_cookies() and bool(
+            AUTH_COOKIES & {c.name for c in youtube_cookies(load_browser_cookies())})
+    except Exception:
+        return False
 
 
 def has_profile_cookies() -> bool:

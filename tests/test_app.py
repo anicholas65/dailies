@@ -712,3 +712,20 @@ def test_delete_sources_single_selected_all(client):
     assert [r["name"] for r in db.q("SELECT name FROM sources")] == ["D"]
     client.post("/sources/bulk-delete", data={"scope": "all"})
     assert not db.q("SELECT 1 FROM sources") and "No sources yet" in client.get("/sources").text
+
+
+
+def test_browser_opens_youtube_when_already_signed_in(client, monkeypatch):
+    monkeypatch.setattr(browser, "profile_signed_in", lambda: False)
+    assert browser.start_url() == browser.GOOGLE_SIGNIN
+    assert "app%3Ddesktop" in browser.GOOGLE_SIGNIN and "next%3D" in browser.GOOGLE_SIGNIN
+    monkeypatch.setattr(browser, "profile_signed_in", lambda: True)
+    assert browser.start_url() == browser.YOUTUBE_HOME
+
+
+
+def test_profile_signed_in_survives_unreadable_cookies(client, monkeypatch):
+    assert browser.profile_signed_in() is False  # no profile in a fresh config
+    monkeypatch.setattr(browser, "has_profile_cookies", lambda: True)
+    monkeypatch.setattr(browser, "load_browser_cookies", lambda: 1 / 0)
+    assert browser.profile_signed_in() is False
