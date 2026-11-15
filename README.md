@@ -46,3 +46,14 @@ CONFIG_DIR=./data/config DOWNLOADS_DIR=./data/dl .venv/bin/uvicorn app.main:app 
 ```
 
 Push to `main` → GitHub Actions runs tests and publishes `ghcr.io/anicholas65/dailies:latest`.
+
+## Security
+
+- **Set `DAILIES_PASSWORD`.** Without it, anyone on your network can use Dailies; the sign-in browser and
+  cookie export are disabled until a password is set, because they'd expose your Google account.
+- Requests from other websites are refused (Origin/Referer check on every form and the browser
+  WebSocket), pages can't be framed by other sites, and 5 wrong passwords lock that address for 10 minutes.
+- Exported cookies.txt holds youtube.com cookies only, never google.com, and no copy is kept on disk.
+- Download folders can't be system folders or `/config`.
+- Behind a reverse proxy, forward the original host (`X-Forwarded-Host`) so the same-site check passes.
+- Don't expose port 8945 to the internet; use a VPN (e.g. Tailscale/WireGuard) for remote access.

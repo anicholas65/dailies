@@ -15,7 +15,9 @@
     {% endfor %}
   </nav>
 </header>
-<main>{% block body %}{% endblock %}</main>
+<main>
+{% if no_password is defined and no_password %}<div class="banner bad">No web UI password is set, so anyone on your network can use Dailies{% if auth is defined and auth and auth.signed_in %} and its YouTube sign-in{% endif %}. In Unraid, edit the Dailies container, set <b>Web UI password</b> and apply. The sign-in browser and cookie export stay locked until you do.</div>{% endif %}
+{% block body %}{% endblock %}</main>
 <footer>Dailies {{ version }}, downloading with yt-dlp</footer>
 <script src="/static/app.js?v={{ version }}"></script>
 </body>

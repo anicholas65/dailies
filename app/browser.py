@@ -239,10 +239,11 @@ def status() -> dict:
 
 
 def export_cookies_txt(dest: Path) -> int:
-    """Write the browser profile's YouTube/Google cookies to a Netscape cookies.txt."""
+    """Write the browser profile's youtube.com cookies (enough for yt-dlp) to a Netscape cookies.txt.
+    google.com cookies are left out: they would unlock the whole Google account (Gmail, Drive...)."""
     from yt_dlp.cookies import YoutubeDLCookieJar
     out = YoutubeDLCookieJar(str(dest))
-    for c in youtube_cookies(load_browser_cookies()):
+    for c in [c for c in load_browser_cookies() if c.domain.lstrip(".").endswith("youtube.com")]:
         out.set_cookie(c)
     out.save(ignore_discard=True, ignore_expires=True)
     dest.chmod(0o600)

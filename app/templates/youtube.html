@@ -19,7 +19,7 @@
   </form>
   <div class="row">
     <form method="post" action="/youtube/verify"><button class="sm" {{ 'disabled' if auth.mode == 'none' }}>Test with YouTube</button></form>
-    {% if auth.mode == 'browser' and auth.signed_in %}<a class="button sm ghost" href="/youtube/cookies.txt">Export cookies.txt</a>{% endif %}
+    {% if auth.mode == 'browser' and auth.signed_in and not no_password %}<a class="button sm ghost" href="/youtube/cookies.txt">Export cookies.txt</a>{% endif %}
     <form method="post" action="/youtube/signout" data-confirm="Delete the browser profile and any cookies.txt? You'll need to sign in again."><button class="sm bad">Sign out</button></form>
   </div>
 </section>
@@ -29,7 +29,7 @@
     {% if auth.running %}
     <form method="post" action="/youtube/browser/stop"><button>Done — close browser &amp; save</button></form>
     {% else %}
-    <form method="post" action="/youtube/browser/start"><button {{ 'disabled' if not (auth.available.values()|min) }}>{{ 'Open browser' if not auth.signed_in else 'Open browser again' }}</button></form>
+    <form method="post" action="/youtube/browser/start"><button {{ 'disabled title="Set a web UI password first"' if no_password or not (auth.available.values()|min) }}>{{ 'Open browser' if not auth.signed_in else 'Open browser again' }}</button></form>
     {% endif %}
   </div>
   {% if auth.running %}

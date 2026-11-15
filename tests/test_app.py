@@ -83,7 +83,14 @@ def test_cookie_upload_rejects_junk(client):
     assert not config.COOKIES_FILE.exists()
 
 
+def _login(client, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "PASSWORD", "pw")
+    client.post("/login", data={"password": "pw"})
+
+
 def test_browser_start_reports_missing(client, monkeypatch):
+    _login(client, monkeypatch)
     monkeypatch.setattr(browser, "available", lambda: {"chromium": False, "xvfb": True, "x11vnc": True, "novnc": True})
     r = client.post("/youtube/browser/start", follow_redirects=False)
     assert "chromium" in r.headers["location"]
@@ -175,6 +182,7 @@ def test_browser_failure_is_reported(client, monkeypatch, tmp_path):
     novnc.mkdir()
     monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
     monkeypatch.setenv("NOVNC_DIR", str(novnc))
+    _login(client, monkeypatch)
     r = client.post("/youtube/browser/start", follow_redirects=False)
     from urllib.parse import unquote_plus
     loc = unquote_plus(r.headers["location"])
@@ -524,3 +532,53 @@ def test_folder_location_dropdown(client):
     # or type one
     client.post("/settings/folders", data={"name": "Docs", "path": "__custom", "path_custom": "/srv/docs/", "layout": "shows"})
     assert db.one("SELECT path FROM folders WHERE name='Docs'")["path"] == "/srv/docs"
+
+
+def test_cross_site_requests_blocked(client):
+    sid = db.run("INSERT INTO sources(name, url, kind, profile_id) VALUES ('S', 'u', 'channel', 1)")
+    mid = db.run("INSERT INTO media(source_id, video_id, title, url, status) VALUES (?, 'a', 't', 'u', 'pending')", (sid,))
+    evil = {"origin": "http://evil.example"}
+    r = client.post("/media/bulk-delete", data={"scope": "all"}, headers=evil)
+    assert r.status_code == 403
+    assert db.one("SELECT status FROM media WHERE id=?", (mid,))["status"] == "pending"
+    r = client.post("/media/bulk-delete", data={"ids": [str(mid)]}, headers={"referer": "http://evil.example/x"})
+    assert r.status_code == 403
+    # same site (as a browser sends it) and no Origin (curl) still work
+    ok = client.post(f"/media/{mid}/skip", headers={"origin": "http://testserver"}, follow_redirects=False)
+    assert ok.status_code == 303 and db.one("SELECT status FROM media WHERE id=?", (mid,))["status"] == "skipped"
+    proxied = client.post(f"/media/{mid}/queue", headers={"origin": "https://dailies.home", "x-forwarded-host": "dailies.home"},
+                          follow_redirects=False)
+    assert proxied.status_code == 303
+    page = client.get("/")
+    assert page.headers["x-frame-options"] == "SAMEORIGIN" and "frame-ancestors 'self'" in page.headers["content-security-policy"]
+
+
+def test_no_password_locks_google_features(client, monkeypatch):
+    r = client.post("/youtube/browser/start", follow_redirects=False)
+    assert "Set+a+web+UI+password" in r.headers["location"]
+    r = client.get("/youtube/cookies.txt", follow_redirects=False)
+    assert r.status_code == 303 and "password" in r.headers["location"]
+    assert "No web UI password" in client.get("/").text
+    _login(client, monkeypatch)
+    assert "No web UI password" not in client.get("/").text
+
+
+def test_login_throttle(client, monkeypatch):
+    from app import config, main
+    monkeypatch.setattr(config, "PASSWORD", "pw")
+    main._failures.clear()
+    for _ in range(5):
+        assert "error=1" in client.post("/login", data={"password": "nope"}, follow_redirects=False).headers["location"]
+    r = client.post("/login", data={"password": "pw"}, follow_redirects=False)
+    assert "error=locked" in r.headers["location"]  # even the right password waits out the lock
+    main._failures.clear()
+    assert client.post("/login", data={"password": "pw"}, follow_redirects=False).headers["location"] == "/"
+
+
+def test_folder_paths_guarded(client):
+    from app import config
+    for bad in ("/", "/etc", "/usr/lib", str(config.CONFIG_DIR), str(config.CONFIG_DIR / "browser"), "/proc/self"):
+        r = client.post("/settings/folders", data={"name": "X", "path": "__custom", "path_custom": bad, "layout": "shows"},
+                        follow_redirects=True)
+        assert db.one("SELECT 1 FROM folders WHERE name='X'") is None, bad
+        assert "system folder" in r.text or "Google sign-in data" in r.text, bad

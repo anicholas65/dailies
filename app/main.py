@@ -43,25 +43,70 @@ def authed(cookies) -> bool:
     return not config.PASSWORD or hmac.compare_digest(cookies.get("dailies", ""), _token())
 
 
+def same_origin(headers) -> bool:
+    """Reject requests a different website makes on your behalf (CSRF / cross-site WebSocket).
+    Browsers always send Origin on cross-site POSTs and WebSockets; tools like curl send none."""
+    origin = headers.get("origin") or headers.get("referer")
+    if not origin:
+        return True  # not sent by a browser page (curl, scripts); "null" origins fall through and fail
+    from urllib.parse import urlsplit
+    host = urlsplit(origin).netloc.lower()
+    allowed = {h.strip().lower() for h in (headers.get("x-forwarded-host", ""), headers.get("host", "")) if h}
+    return host in allowed
+
+
+SECURITY_HEADERS = {
+    "X-Frame-Options": "SAMEORIGIN",            # no clickjacking; the noVNC iframe is same-origin
+    "Content-Security-Policy": "frame-ancestors 'self'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+}
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
-    if path.startswith(("/static", "/login", "/api/health")) or authed(request.cookies):
-        return await call_next(request)
-    if path.startswith("/api"):
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
-    return RedirectResponse("/login", status_code=303)
+    if request.method not in ("GET", "HEAD", "OPTIONS") and not same_origin(request.headers):
+        db.log("warn", f"Blocked a {request.method} to {path} from another website ({request.headers.get('origin')})")
+        resp = JSONResponse({"error": "cross-site request blocked"}, status_code=403)
+    elif path.startswith(("/static", "/login", "/api/health")) or authed(request.cookies):
+        resp = await call_next(request)
+    elif path.startswith("/api"):
+        resp = JSONResponse({"error": "unauthorized"}, status_code=401)
+    else:
+        resp = RedirectResponse("/login", status_code=303)
+    resp.headers.update(SECURITY_HEADERS)
+    return resp
+
+
+# login throttle: 5 wrong passwords per address -> locked for 10 minutes
+_failures: dict[str, list[float]] = {}
+LOCK_AFTER, LOCK_SECONDS = 5, 600
+
+
+def login_locked(ip: str) -> bool:
+    import time
+    now = time.time()
+    _failures[ip] = [t for t in _failures.get(ip, []) if now - t < LOCK_SECONDS]
+    return len(_failures[ip]) >= LOCK_AFTER
 
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, error: str = ""):
-    return templates.TemplateResponse(request, "login.html", {"error": error})
+    return templates.TemplateResponse(request, "login.html", {"error": error, "no_password": False})
 
 
 @app.post("/login")
-def login(password: str = Form(...)):
-    if not config.PASSWORD or not hmac.compare_digest(password, config.PASSWORD):
+def login(request: Request, password: str = Form(...)):
+    import time
+    ip = request.client.host if request.client else "?"
+    if login_locked(ip):
+        return RedirectResponse("/login?error=locked", status_code=303)
+    if not config.PASSWORD or not hmac.compare_digest(password.encode(), config.PASSWORD.encode()):
+        _failures.setdefault(ip, []).append(time.time())
+        db.log("warn", f"Wrong web UI password from {ip}")
         return RedirectResponse("/login?error=1", status_code=303)
+    _failures.pop(ip, None)
     resp = RedirectResponse("/", status_code=303)
     resp.set_cookie("dailies", _token(), httponly=True, samesite="lax", max_age=60 * 60 * 24 * 90)
     return resp
@@ -78,6 +123,7 @@ def logout():
 
 def page(request, name, **ctx):
     ctx.setdefault("auth", browser.status())
+    ctx["no_password"] = not config.PASSWORD
     ctx["nav"] = name.split(".")[0]
     return templates.TemplateResponse(request, name, ctx)
 
@@ -388,8 +434,14 @@ def youtube(request: Request, msg: str = "", ok: str = ""):
                 diag=browser.diagnostics())
 
 
+NEEDS_PASSWORD = ("Set a web UI password first (Unraid: edit the Dailies container, Web UI password). "
+                  "Without one, anyone on your network could use your signed-in Google account.")
+
+
 @app.post("/youtube/browser/start")
 def browser_start():
+    if not config.PASSWORD:
+        return yt(NEEDS_PASSWORD, False)
     try:
         browser.start()
     except RuntimeError as exc:
@@ -436,12 +488,17 @@ async def upload_cookies(file: UploadFile = File(...)):
 
 @app.get("/youtube/cookies.txt")
 def export_cookies():
+    if not config.PASSWORD:
+        return yt(NEEDS_PASSWORD, False)
+    from starlette.background import BackgroundTask
     dest = config.CONFIG_DIR / "exported-cookies.txt"
     try:
         browser.export_cookies_txt(dest)
     except Exception as exc:
         return yt(f"Export failed: {exc}", False)
-    return FileResponse(dest, filename="youtube-cookies.txt", media_type="text/plain")
+    db.log("info", "Exported YouTube cookies.txt")
+    return FileResponse(dest, filename="youtube-cookies.txt", media_type="text/plain",
+                        background=BackgroundTask(dest.unlink, missing_ok=True))  # don't leave a copy behind
 
 
 @app.post("/youtube/verify")
@@ -453,7 +510,7 @@ async def verify():
 @app.websocket("/vnc/ws")
 async def vnc_proxy(ws: WebSocket):
     """Bridge noVNC (WebSocket) to x11vnc (TCP, localhost only)."""
-    if not authed(ws.cookies) or not browser.running():
+    if not authed(ws.cookies) or not same_origin(ws.headers) or not config.PASSWORD or not browser.running():
         await ws.close(code=1008)
         return
     proto = ws.headers.get("sec-websocket-protocol", "")
@@ -523,6 +580,8 @@ def folder_values(form) -> tuple[dict, str]:
         return vals, "Give the folder a name."
     if not vals["path"].startswith("/"):
         return vals, "Use a full path inside the container, e.g. /media/Movies."
+    if reason := folders.forbidden(vals["path"]):
+        return vals, reason
     return vals, ""
 
 

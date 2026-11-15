@@ -117,11 +117,28 @@ def locations() -> dict[str, list[str]]:
     return out
 
 
+FORBIDDEN = ("/", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/run", "/sbin", "/sys",
+             "/usr", "/var", "/app", "/opt")
+
+
+def forbidden(path: str) -> str:
+    """Download folders may not be system directories or hold Dailies' own config/sign-in data."""
+    p = Path(os.path.abspath(path))
+    cfg = config.CONFIG_DIR.resolve()
+    if str(p) == "/" or any(str(p) == f or (f != "/" and p.is_relative_to(f)) for f in FORBIDDEN):
+        return f"{path} is a system folder. Pick one of your mapped shares."
+    if p.resolve() == cfg or p.resolve().is_relative_to(cfg) or cfg.is_relative_to(p.resolve()):
+        return f"{path} would mix downloads with Dailies' settings and Google sign-in data. Pick another folder."
+    return ""
+
+
 def check(path: str) -> tuple[bool, str, str]:
     """(usable, short status, explanation) for the Settings page and before a download."""
     p = Path(path)
     if not p.is_absolute():
         return False, "Invalid path", "Use a full path inside the container, e.g. /media/Movies."
+    if reason := forbidden(path):
+        return False, "Not allowed", reason
     existing = p
     while not existing.exists():
         existing = existing.parent
