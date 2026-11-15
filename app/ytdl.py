@@ -112,7 +112,9 @@ def profile_opts(profile, source) -> dict:
     else:
         opts["merge_output_format"] = profile["container"] if profile["container"] in ("mp4", "mkv", "webm") else "mkv"
         if profile["prefer_h264"]:
-            opts["format_sort"] = ["vcodec:h264", "acodec:m4a", "res", "fps"]
+            # resolution first: H.264 only wins between formats of the same height
+            # (YouTube's H.264 tops out at 1080p, often lower)
+            opts["format_sort"] = ["res", "fps", "vcodec:h264", "acodec:m4a"]
     if profile["subtitles"].strip() and not audio:
         opts["writesubtitles"] = True
         opts["writeautomaticsub"] = bool(profile["auto_subs"])
@@ -260,7 +262,7 @@ def download(media_id: int) -> str:
                "downloaded=datetime('now') WHERE id=?",
                (path, size, info.get("title") or item["title"], info.get("upload_date"),
                 int(info["duration"]) if info.get("duration") else None, media_id))
-        db.log("info", f"Downloaded {info.get('title')}")
+        db.log("info", f"Downloaded {info.get('title')} ({resolution_note(info, profile)})")
         return "downloaded"
     except Exception as exc:
         msg = clean_error(exc)
@@ -272,6 +274,17 @@ def download(media_id: int) -> str:
         return "login" if login and "Sign in to confirm" in msg else "failed"
     finally:
         progress.pop(media_id, None)
+
+
+def resolution_note(info, profile) -> str:
+    """e.g. '1080p vp9', flagged when below the profile's target resolution."""
+    height = info.get("height")
+    if profile["quality"] == "audio" or not height:
+        return info.get("format_id") or "?"
+    note = f"{height}p {(info.get('vcodec') or '').split('.')[0]}".strip()
+    if profile["quality"].isdigit() and height < int(profile["quality"]):
+        note += f", below {profile['quality']}p target - YouTube offered nothing higher"
+    return note
 
 
 def final_path(info) -> str | None:

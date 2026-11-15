@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from app import browser, config, db, ytdl
 
 COOKIES = """# Netscape HTTP Cookie File
@@ -186,3 +188,31 @@ def test_vnc_iframe_uses_absolute_ws_path(client, monkeypatch):
     html = client.get("/youtube").text
     assert "path=/vnc/ws" in html
     assert any(r.path == "/vnc/ws" for r in client.app.routes)
+
+
+def _fmt(fid, h, vcodec, ext="mp4"):
+    return {"format_id": fid, "url": f"http://x/{fid}", "ext": ext, "height": h, "width": h * 16 // 9,
+            "vcodec": vcodec, "acodec": "none", "protocol": "https", "tbr": h}
+
+
+FAKE_FORMATS = [
+    _fmt("136", 720, "avc1.4d401f"), _fmt("137", 1080, "avc1.640028"),
+    _fmt("248", 1080, "vp09.00.40.08", "webm"), _fmt("271", 1440, "vp09.00.50.08", "webm"),
+    _fmt("313", 2160, "vp09.00.51.08", "webm"),
+    {"format_id": "140", "url": "http://x/140", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2",
+     "abr": 128, "protocol": "https"},
+]
+
+
+@pytest.mark.parametrize("quality,want", [("2160", "313"), ("1440", "271"), ("1080", "137"), ("720", "136")])
+def test_quality_is_honoured_with_prefer_h264(client, quality, want):
+    import yt_dlp
+    from app import db, ytdl
+    db.run("UPDATE profiles SET quality=?, prefer_h264=1 WHERE id=1", (quality,))
+    p = db.one("SELECT * FROM profiles WHERE id=1")
+    opts = ytdl.profile_opts(p, {"name": "S"}) | {"quiet": True, "simulate": True, "postprocessors": []}
+    info = {"id": "x", "title": "t", "formats": [dict(f) for f in FAKE_FORMATS],
+            "extractor": "youtube", "extractor_key": "Youtube", "webpage_url": "http://x"}
+    r = yt_dlp.YoutubeDL(opts).process_ie_result(info, download=False)
+    assert r["format_id"] == f"{want}+140"
+    assert ytdl.resolution_note(r, p).startswith(f"{quality}p")
