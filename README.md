@@ -5,6 +5,7 @@ Self-hosted YouTube archiver for Unraid, in the spirit of Pinchflat — with **Y
 - Subscribe to channels, playlists, single videos, or your own **Watch Later** / **Liked** lists
 - Scheduled checks, download queue with live progress, retries, auto-pause on YouTube's bot check
 - Profiles: quality cap (4K…480p, audio-only), MP4/MKV, prefer H.264, subtitles, SponsorBlock, chapters, thumbnails, Jellyfin/Plex/Kodi `.nfo`
+- Files are organised by publisher: `Channel/Season YYYY/sYYYYeMMDDnn - Title [id].mp4`, whatever source (channel, playlist or single video) they came from. The video thumbnail is embedded as cover art and saved as `-thumb.jpg`; the channel avatar/banner become the show poster/fanart
 - Per-source filters: newest N, skip uploads before a date, title include/exclude regex, minimum length, Shorts/livestream toggles, auto-delete after N days
 - yt-dlp + deno (YouTube JS challenges) + ffmpeg; yt-dlp self-updates on container start
 

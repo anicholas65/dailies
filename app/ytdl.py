@@ -94,11 +94,20 @@ def parse_rate(text: str) -> int | None:
     return int(float(m.group(1)) * mult)
 
 
+def profile_template(profile) -> str:
+    return profile["output"] or (config.AUDIO_TEMPLATE if profile["quality"] == "audio" else config.VIDEO_TEMPLATE)
+
+
+def by_channel(profile) -> bool:
+    """Shows are named after the publisher (else after the Dailies source)."""
+    return "{channel}" in profile_template(profile)
+
+
 def profile_opts(profile, source) -> dict:
     audio = profile["quality"] == "audio"
     folder = config.DOWNLOADS_DIR
-    template = (profile["output"] or (config.AUDIO_TEMPLATE if audio else config.VIDEO_TEMPLATE))
-    template = template.replace("{source}", safe_name(source["name"]))
+    template = profile_template(profile).replace("{source}", safe_name(source["name"]))
+    template = template.replace("{channel}", "%(dailies_channel)s")  # filled in by episode_fields
     opts = {
         "format": QUALITY_FORMATS.get(profile["quality"], QUALITY_FORMATS["best"]),
         "outtmpl": {"default": str(folder / template),
@@ -274,7 +283,7 @@ def download(media_id: int) -> str:
                 db.run("UPDATE media SET status='skipped', error=?, title=?, upload_date=? WHERE id=?",
                        (reason, info.get("title") or item["title"], info.get("upload_date"), media_id))
                 return "skipped"
-            info.update(episode_fields(media_id, source, info))
+            info.update(episode_fields(media_id, source, info, by_channel(profile)))
             info = ydl.process_ie_result(info, download=True)
             path = final_path(info)
             if path and profile["write_nfo"] and profile["quality"] != "audio":
@@ -342,7 +351,7 @@ def refresh(media_id: int) -> str:
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(item["url"], download=False, process=False)
-            info.update(episode_fields(media_id, source, info))
+            info.update(episode_fields(media_id, source, info, by_channel(profile)))
             info["ext"] = old.suffix[1:]
             new = Path(ydl.prepare_filename(info))
             new = move_with_sidecars(old, new)
@@ -417,21 +426,33 @@ def final_path(info) -> str | None:
     return info.get("filepath") or info.get("_filename")
 
 
-def episode_fields(media_id: int, source, info) -> dict:
+def channel_name(info, source) -> str:
+    name = info.get("channel") or info.get("uploader") or source["name"]
+    return html.unescape(name).strip() or source["name"]
+
+
+def episode_fields(media_id: int, source, info, channel_shows: bool = True) -> dict:
     """Season = upload year, episode = MMDDnn (nn = 01, 02... in the order videos from that day are
-    downloaded). Assigned once and stored, so re-downloads keep their number.
+    downloaded), unique within the show (channel, or source when the layout uses {source}).
+    Assigned once and stored, so re-downloads keep their number.
     Not season_number/episode_number: MP4 stores those as 8-bit, so 2026 would embed as 234."""
     date = info.get("upload_date") or dt.date.today().strftime("%Y%m%d")
     base = int(date[4:8]) * 100
+    channel = channel_name(info, source)
+    scope, key = ("channel=?", channel) if channel_shows else ("source_id=?", source["id"])
     with db.tx() as conn:
         ep = conn.execute("SELECT episode FROM media WHERE id=?", (media_id,)).fetchone()["episode"]
-        if not ep or ep // 100 != base // 100:
-            last = conn.execute("SELECT MAX(episode) FROM media WHERE source_id=? AND episode BETWEEN ? AND ? "
+        clash = ep and conn.execute(f"SELECT 1 FROM media WHERE {scope} AND episode=? AND "
+                                    "substr(upload_date, 1, 4)=? AND id!=?",
+                                    (key, ep, date[:4], media_id)).fetchone()
+        if not ep or ep // 100 != base // 100 or clash:
+            last = conn.execute(f"SELECT MAX(episode) FROM media WHERE {scope} AND episode BETWEEN ? AND ? "
                                 "AND substr(upload_date, 1, 4)=? AND id!=?",
-                                (source["id"], base, base + 99, date[:4], media_id)).fetchone()[0]
+                                (key, base, base + 99, date[:4], media_id)).fetchone()[0]
             ep = min((last or base) + 1, base + 99)
-        conn.execute("UPDATE media SET upload_date=?, episode=? WHERE id=?", (date, ep, media_id))
-    return {"series": source["name"], "dailies_season": int(date[:4]), "dailies_episode": ep}
+        conn.execute("UPDATE media SET upload_date=?, episode=?, channel=? WHERE id=?", (date, ep, channel, media_id))
+    return {"series": channel if channel_shows else source["name"], "dailies_channel": safe_name(channel),
+            "dailies_season": int(date[:4]), "dailies_episode": ep}
 
 
 def show_dir(path: Path) -> Path:
@@ -451,7 +472,7 @@ def write_nfo(path: Path, info, source):
     body = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<episodedetails>\n'
         f"  <title>{e(info.get('title'))}</title>\n"
-        f"  <showtitle>{e(source['name'])}</showtitle>\n"
+        f"  <showtitle>{e(info.get('series') or source['name'])}</showtitle>\n"
         f"  <season>{e(info.get('dailies_season'))}</season>\n"
         f"  <episode>{e(info.get('dailies_episode'))}</episode>\n"
         f"  <plot>{e(info.get('description'))}</plot>\n"
@@ -479,18 +500,18 @@ def write_show_files(folder: Path, source, info, ydl):
         except Exception as exc:  # artwork is nice-to-have
             db.log("warn", f"Channel artwork for {source['name']}: {clean_error(exc)[:200]}")
     if not (folder / "tvshow.nfo").exists():
-        plot = channel.get("description") if source["kind"] == "channel" else None
         (folder / "tvshow.nfo").write_text(
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<tvshow>\n'
-            f"  <title>{e(source['name'])}</title>\n"
-            f"  <plot>{e(plot or channel.get('description'))}</plot>\n"
+            f"  <title>{e(info.get('series') or source['name'])}</title>\n"
+            f"  <plot>{e(channel.get('description'))}</plot>\n"
             f"  <studio>{e(info.get('channel') or info.get('uploader'))}</studio>\n"
             f"  <genre>YouTube</genre>\n"
             f"  <uniqueid type=\"youtube\" default=\"true\">{e(info.get('channel_id'))}</uniqueid>\n"
             "</tvshow>\n", encoding="utf-8")
     thumbs = {t.get("id"): t.get("url") for t in channel.get("thumbnails") or []}
     for name in missing:
-        if not (url := thumbs.get(art[name])):
+        # no channel art (or it failed to load): the video's own thumbnail stands in
+        if not (url := thumbs.get(art[name]) or best_thumbnail(info)):
             continue
         try:
             data = ydl.urlopen(url).read()

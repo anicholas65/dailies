@@ -150,6 +150,8 @@ def init():
         mcols = {r[1] for r in conn.execute("PRAGMA table_info(media)")}
         if "episode" not in mcols:  # 0.1.6: Jellyfin episode no.
             conn.execute("ALTER TABLE media ADD COLUMN episode INTEGER")
+        if "channel" not in mcols:  # 0.1.8: publisher; episode numbers are unique per channel folder
+            conn.execute("ALTER TABLE media ADD COLUMN channel TEXT")
         if "refresh" not in mcols:  # 0.1.7: queued rename + metadata refresh of an existing file
             conn.execute("ALTER TABLE media ADD COLUMN refresh INTEGER NOT NULL DEFAULT 0")
         cols = {r[1] for r in conn.execute("PRAGMA table_info(sources)")}

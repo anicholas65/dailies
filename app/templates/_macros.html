@@ -4,8 +4,9 @@
 {% macro size(b) %}{% if b %}{{ '%.1f GB'|format(b / 1073741824) if b > 1073741824 else '%.0f MB'|format(b / 1048576) }}{% endif %}{% endmacro %}
 {% macro media_row(m, show_source=true) %}
 <tr data-media="{{ m.id }}">
+  <td class="thumb"><a href="https://www.youtube.com/watch?v={{ m.video_id }}" target="_blank" rel="noopener" tabindex="-1"><img src="https://i.ytimg.com/vi/{{ m.video_id }}/mqdefault.jpg" alt="" loading="lazy" width="128" height="72"></a></td>
   <td class="title"><a href="https://www.youtube.com/watch?v={{ m.video_id }}" target="_blank" rel="noopener">{{ m.title }}</a>
-    {% if show_source %}<div class="sub">{{ m.source }}</div>{% endif %}
+    {% if show_source or m.channel %}<div class="sub">{% if m.channel %}{{ m.channel }}{% endif %}{% if show_source and m.channel and m.channel != m.source %} · {% endif %}{% if show_source and m.channel != m.source %}{{ m.source }}{% endif %}</div>{% endif %}
     {% if m.error and m.status in ('failed','skipped') %}<div class="err">{{ m.error }}</div>{% endif %}
     <div class="prog" hidden><span></span><em></em></div>
   </td>

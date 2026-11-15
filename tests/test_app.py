@@ -48,8 +48,8 @@ def test_profile_opts(client):
     s = {"name": "My/Chan"}
     o = ytdl.profile_opts(p, s)
     assert "height<=1080" in o["format"]
-    assert o["merge_output_format"] == "mp4"
-    assert "My_Chan/" in o["outtmpl"]["default"]
+    assert "/%(dailies_channel)s/Season" in o["outtmpl"]["default"]
+    assert "My_Chan/" in ytdl.profile_opts(dict(p) | {"output": "{source}/%(title)s.%(ext)s"}, s)["outtmpl"]["default"]
     a = ytdl.profile_opts(db.one("SELECT * FROM profiles WHERE quality='audio'"), s)
     assert a["postprocessors"][0] == {"key": "FFmpegExtractAudio", "preferredcodec": "m4a", "preferredquality": "0"}
 
@@ -281,24 +281,58 @@ def test_blank_name_is_auto_named_on_index(client, monkeypatch):
 def test_jellyfin_layout(client):
     from app import config
     p = db.one("SELECT * FROM profiles WHERE name='1080p MP4'")
-    assert p["output"] == ""
+    assert p["output"] == "" and ytdl.by_channel(p)
     sid = db.run("INSERT INTO sources(name, url, kind, profile_id) VALUES ('My: Chan', 'u', 'channel', ?)", (p["id"],))
     m1 = db.run("INSERT INTO media(source_id, video_id, title, url) VALUES (?, 'a', 't', 'u')", (sid,))
     m2 = db.run("INSERT INTO media(source_id, video_id, title, url) VALUES (?, 'b', 't', 'u')", (sid,))
     src = db.one("SELECT * FROM sources WHERE id=?", (sid,))
-    d = {"upload_date": "20260523"}
+    d = {"upload_date": "20260523", "channel": "My: Chan"}
     assert ytdl.episode_fields(m2, src, d)["dailies_episode"] == 52301
-    assert ytdl.episode_fields(m1, src, d) == {"series": "My: Chan", "dailies_season": 2026, "dailies_episode": 52302}
+    assert ytdl.episode_fields(m1, src, d) == {"series": "My: Chan", "dailies_channel": "My_ Chan",
+                                               "dailies_season": 2026, "dailies_episode": 52302}
     assert ytdl.episode_fields(m2, src, d)["dailies_episode"] == 52301  # re-download keeps its number
     m3 = db.run("INSERT INTO media(source_id, video_id, title, url) VALUES (?, 'c', 't', 'u')", (sid,))
-    assert ytdl.episode_fields(m3, src, {"upload_date": "20250523"})["dailies_episode"] == 52301  # other year
+    assert ytdl.episode_fields(m3, src, d | {"upload_date": "20250523"})["dailies_episode"] == 52301  # other year
     o = ytdl.profile_opts(p, src)
-    assert o["outtmpl"]["default"].endswith("My_ Chan/Season %(dailies_season)s/s%(dailies_season)se%(dailies_episode)06d - %(title)s [%(id)s].%(ext)s")
+    assert o["outtmpl"]["default"].endswith("%(dailies_channel)s/Season %(dailies_season)s/s%(dailies_season)se%(dailies_episode)06d - %(title)s [%(id)s].%(ext)s")
     assert o["outtmpl"]["thumbnail"].endswith("[%(id)s]-thumb.%(ext)s")
     a = ytdl.profile_opts(db.one("SELECT * FROM profiles WHERE name='Audio (MP3)'"), src)
-    assert a["outtmpl"]["default"].endswith(config.AUDIO_TEMPLATE.replace("{source}", "My_ Chan"))
+    assert a["outtmpl"]["default"].endswith(config.AUDIO_TEMPLATE.replace("{channel}", "%(dailies_channel)s"))
     from pathlib import Path
     assert ytdl.show_dir(Path("/d/Chan/Season 2026/x.mp4")) == Path("/d/Chan")
+
+
+def test_videos_group_by_channel_across_sources(client):
+    """Single-video and playlist sources from one publisher land in that publisher's show,
+    with episode numbers unique across the show."""
+    p = db.one("SELECT * FROM profiles WHERE name='1080p MP4'")
+    s1 = db.run("INSERT INTO sources(name, url, kind, profile_id) VALUES ('Some Video', 'u', 'video', ?)", (p["id"],))
+    s2 = db.run("INSERT INTO sources(name, url, kind, profile_id) VALUES ('A Playlist', 'u', 'playlist', ?)", (p["id"],))
+    m1 = db.run("INSERT INTO media(source_id, video_id, title, url) VALUES (?, 'a', 't', 'u')", (s1,))
+    m2 = db.run("INSERT INTO media(source_id, video_id, title, url) VALUES (?, 'b', 't', 'u')", (s2,))
+    src1, src2 = (db.one("SELECT * FROM sources WHERE id=?", (i,)) for i in (s1, s2))
+    d = {"upload_date": "20260523", "channel": "Greg &amp; Co"}
+    f1, f2 = ytdl.episode_fields(m1, src1, d), ytdl.episode_fields(m2, src2, d)
+    assert f1["series"] == f2["series"] == "Greg & Co" and f1["dailies_channel"] == "Greg & Co"
+    assert (f1["dailies_episode"], f2["dailies_episode"]) == (52301, 52302)
+    assert db.one("SELECT channel FROM media WHERE id=?", (m2,))["channel"] == "Greg & Co"
+    # numbers assigned per source before 0.1.8 that now collide in one show get renumbered
+    db.run("UPDATE media SET episode=52301 WHERE id=?", (m2,))
+    assert ytdl.episode_fields(m2, src2, d)["dailies_episode"] == 52302
+    # no channel in metadata: fall back to the source name
+    assert ytdl.episode_fields(m1, src1, {"upload_date": "20260523"})["series"] == "Some Video"
+    # a {source} template keeps one show per source
+    custom = dict(p) | {"output": "{source}/%(title)s.%(ext)s"}
+    assert not ytdl.by_channel(custom)
+    assert ytdl.episode_fields(m2, src2, d, False)["series"] == "A Playlist"
+
+
+def test_media_list_shows_thumbnail_and_channel(client):
+    sid = db.run("INSERT INTO sources(name, url, kind, profile_id) VALUES ('Some Video', 'u', 'video', 1)")
+    db.run("INSERT INTO media(source_id, video_id, title, url, channel) VALUES (?, 'abc123', 't', 'u', 'Greg')", (sid,))
+    html = client.get("/media").text
+    assert "https://i.ytimg.com/vi/abc123/mqdefault.jpg" in html
+    assert "Greg · Some Video" in html
 
 
 def test_legacy_template_migrates(client):
