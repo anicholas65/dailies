@@ -91,6 +91,16 @@ details.card[open]>summary::before{transform:translateY(2px) rotate(90deg)}
 .prog span{position:absolute;left:0;bottom:0;height:3px;background:var(--cyan);width:0;transition:width .5s}
 .prog em{position:absolute;left:8px;bottom:5px;font-size:11.5px;font-style:normal;color:#fff;letter-spacing:.2px}
 
+/* selection */
+.frame{position:relative}
+.pick{position:absolute;top:20px;left:6px;z-index:2;display:flex;padding:5px;border-radius:3px;background:rgba(0,0,0,.55);cursor:pointer;line-height:0}
+.pick input{width:17px;height:17px;margin:0;cursor:pointer}
+.frame.picked .reel{outline:3px solid var(--accent);outline-offset:2px}
+.bulk{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:20;display:flex;gap:10px;align-items:center;
+  background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:9px 12px;box-shadow:0 6px 24px rgba(0,0,0,.28);max-width:calc(100vw - 32px)}
+.bulk[hidden]{display:none}
+.pick-all{display:flex;gap:8px;align-items:center;font-weight:600;white-space:nowrap;cursor:pointer}
+
 /* status: a coloured mark, not a pill */
 .badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;color:var(--muted)}
 .badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}

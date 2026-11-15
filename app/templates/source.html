@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import media_row %}
+{% from "_macros.html" import media_row, bulk_bar %}
 {% block title %}{{ s.name }} · Dailies{% endblock %}
 {% block body %}
 <div class="head page">
@@ -15,11 +15,12 @@
 {% if s.last_error %}<div class="banner bad">{{ s.last_error }}</div>{% endif %}
 
 <div class="tabs">
-  <a href="?" class="{{ 'on' if not status }}">All <small>{{ counts.values()|sum }}</small></a>
+  <a href="?" class="{{ 'on' if not status }}">All <small>{{ counts.values()|sum - counts.get('deleted', 0) }}</small></a>
   {% for st in ['queued','downloaded','pending','failed','skipped','deleted'] if counts.get(st) %}
   <a href="?status={{ st }}" class="{{ 'on' if status == st }}">{{ st }} <small>{{ counts[st] }}</small></a>
   {% endfor %}
 </div>
+<div class="row" style="margin-bottom:16px">{{ bulk_bar(total, status, '', s.id) }}</div>
 <section class="block">
   {% if media %}<div class="sheet">{% for m in media %}{{ media_row(m, false) }}{% endfor %}</div>
   {% else %}<p class="muted">{{ 'Indexing — videos will appear shortly.' if indexing else 'No videos found yet.' }}</p>{% endif %}

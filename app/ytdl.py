@@ -555,17 +555,34 @@ def apply_retention():
             db.log("info", f"Retention: removed {m['title']}")
 
 
+SHOW_FILES = {"tvshow.nfo", "poster.jpg", "fanart.jpg"}
+
+
 def delete_files(item):
+    """Delete the media file and its sidecars (thumbnail, NFO, subtitles). A season folder left empty
+    is removed; so is a show folder holding nothing but its own artwork."""
     if not item["filepath"]:
         return
     p = Path(item["filepath"])
+    if not p.resolve().is_relative_to(config.DOWNLOADS_DIR.resolve()):
+        return
     stem = p.with_suffix("")
     for f in [p, *p.parent.glob(glob_escape(stem.name) + ".*"), *p.parent.glob(glob_escape(stem.name) + "-thumb.*")]:
         try:
-            if f.is_file() and f.resolve().is_relative_to(config.DOWNLOADS_DIR.resolve()):
+            if f.is_file():
                 f.unlink()
         except OSError:
             pass
+    show = show_dir(p)
+    prune_empty_dirs(p.parent)
+    try:
+        if show.is_dir() and show.resolve() != config.DOWNLOADS_DIR.resolve() and \
+                {f.name for f in show.iterdir()} <= SHOW_FILES:
+            for f in show.iterdir():
+                f.unlink()
+            prune_empty_dirs(show)
+    except OSError:
+        pass
 
 
 def glob_escape(s: str) -> str:

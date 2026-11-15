@@ -1,12 +1,13 @@
 {% extends "base.html" %}
-{% from "_macros.html" import media_row %}
+{% from "_macros.html" import media_row, bulk_bar %}
 {% block title %}Library · Dailies{% endblock %}
 {% block body %}
 <div class="head page"><h1>Library</h1>
-{% if counts.get('downloaded') %}<form method="post" action="/media/refresh-all" data-confirm="Rename files to the profile's current layout and download thumbnails, channel posters and NFOs again from YouTube? Videos are not re-downloaded."><button class="sm ghost">Rename &amp; refresh all files</button></form>{% endif %}</div>
+<div class="row">{{ bulk_bar(total, status, q) }}
+{% if counts.get('downloaded') %}<form method="post" action="/media/refresh-all" data-confirm="Rename files to the profile's current layout and download thumbnails, channel posters and NFOs again from YouTube? Videos are not re-downloaded."><button class="sm ghost">Rename &amp; refresh all files</button></form>{% endif %}</div></div>
 <form class="row filter" method="get">
   <input name="q" value="{{ q }}" placeholder="Search titles">
-  <select name="status" onchange="this.form.submit()"><option value="">All statuses</option>
+  <select name="status" onchange="this.form.submit()"><option value="">All except deleted</option>
     {% for st in ['queued','downloading','downloaded','pending','failed','skipped','deleted'] %}<option {{ 'selected' if status == st }} value="{{ st }}">{{ st }} ({{ counts.get(st, 0) }})</option>{% endfor %}
   </select>
   <button class="sm">Search</button>

@@ -398,3 +398,55 @@ def test_show_artwork_refetched_when_forced(client, tmp_path):
     assert (tmp_path / "poster.jpg").read_bytes() == jpeg(b"newa")
     assert (tmp_path / "fanart.jpg").read_bytes() == jpeg(b"newb")
     assert "<title>Greg 2</title>" in (tmp_path / "tvshow.nfo").read_text()
+
+
+def _video(sid, vid, status="downloaded", title=None):
+    from app import config
+    path = None
+    if status == "downloaded":
+        season = config.DOWNLOADS_DIR / "Greg" / "Season 2026"
+        season.mkdir(parents=True, exist_ok=True)
+        f = season / f"s2026e0101{vid} - t [{vid}].mp4"
+        for side in ("", "-thumb.jpg", ".nfo", ".en.srt"):
+            (f.with_name(f.stem + side) if side else f).write_bytes(b"x")
+        path = str(f)
+    return db.run("INSERT INTO media(source_id, video_id, title, url, status, filepath) VALUES (?, ?, ?, 'u', ?, ?)",
+                  (sid, vid, title or f"Video {vid}", status, path))
+
+
+def test_delete_single_and_selected(client):
+    from app import config
+    sid = db.run("INSERT INTO sources(name, url, kind, profile_id) VALUES ('S', 'u', 'channel', 1)")
+    show = config.DOWNLOADS_DIR / "Greg"
+    a, b, c = _video(sid, "01"), _video(sid, "02"), _video(sid, "03", "pending")
+    for n in ("tvshow.nfo", "poster.jpg", "fanart.jpg"):
+        (show / n).write_bytes(b"x")
+    page = client.get("/media").text
+    assert 'name="ids" value="%d" form="bulk"' % a in page and "Delete all shown (3)" in page
+    client.post(f"/media/{a}/delete")
+    assert not list(show.glob("Season 2026/*[[]01[]]*"))  # video, thumb, nfo, subs all gone
+    assert db.one("SELECT status, filepath FROM media WHERE id=?", (a,))["status"] == "deleted"
+    assert (show / "Season 2026").is_dir() and (show / "poster.jpg").exists()  # b still there
+    client.post("/media/bulk-delete", data={"ids": [str(b), str(c)]})
+    assert {r["status"] for r in db.q("SELECT status FROM media")} == {"deleted"}
+    assert not show.exists()  # last video gone: season folder and show artwork removed
+    assert "Delete all shown" not in client.get("/media").text  # deleted are hidden by default
+    assert "Video 01" in client.get("/media?status=deleted").text
+    client.post(f"/media/{a}/queue")  # can still be downloaded again on purpose
+    assert db.one("SELECT status FROM media WHERE id=?", (a,))["status"] == "queued"
+
+
+def test_delete_all_shown_respects_filter(client):
+    s1 = db.run("INSERT INTO sources(name, url, kind, profile_id) VALUES ('S1', 'u', 'channel', 1)")
+    s2 = db.run("INSERT INTO sources(name, url, kind, profile_id) VALUES ('S2', 'u', 'channel', 1)")
+    keep = _video(s1, "01", title="Keep me")
+    gone = _video(s1, "02", title="Cats one")
+    _video(s1, "03", "downloading", title="Cats busy")
+    other = _video(s2, "04", "pending", title="Cats other source")
+    client.post("/media/bulk-delete", data={"scope": "all", "status": "", "q": "Cats", "source_id": str(s1)})
+    st = {r["id"]: r["status"] for r in db.q("SELECT id, status FROM media")}
+    assert st[gone] == "deleted" and st[keep] == "downloaded" and st[other] == "pending"
+    assert "downloading" in st.values()  # an in-progress download is left alone
+    assert "Delete all shown (1)" in client.get(f"/sources/{s2}").text
+    client.post("/media/bulk-delete", data={"scope": "all", "status": "", "q": ""})
+    assert set(st2 := {r["status"] for r in db.q("SELECT status FROM media")}) == {"deleted", "downloading"}, st2

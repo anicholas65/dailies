@@ -101,6 +101,39 @@ def resume_if_login_paused():
         worker.kick()
 
 
+def media_where(status="", q="", source_id=None) -> tuple[str, list]:
+    """Filter shared by the media lists and "Delete all shown". No status = everything except deleted."""
+    sql, args = " WHERE 1=1", []
+    if source_id is not None:
+        sql += " AND m.source_id=?"
+        args.append(source_id)
+    if status:
+        sql += " AND m.status=?"
+        args.append(status)
+    else:
+        sql += " AND m.status!='deleted'"
+    if q:
+        sql += " AND m.title LIKE ?"
+        args.append(f"%{q}%")
+    return sql, args
+
+
+def delete_media(rows) -> int:
+    """Delete files + mark deleted (the record stays so the next check doesn't download it again)."""
+    n = 0
+    for m in rows:
+        if m["status"] in ("downloading", "deleted"):
+            continue
+        ytdl.delete_files(m)
+        db.run("UPDATE media SET status='deleted', filepath=NULL, filesize=NULL, refresh=0 WHERE id=?", (m["id"],))
+        n += 1
+    return n
+
+
+def deletable(where: str, args: list) -> int:
+    return db.one("SELECT COUNT(*) n FROM media m" + where + " AND m.status NOT IN ('downloading','deleted')", args)["n"]
+
+
 def counts(source_id=None):
     sql = "SELECT status, COUNT(*) n FROM media"
     args = ()
@@ -198,12 +231,10 @@ def source_detail(request: Request, sid: int, status: str = ""):
     s = db.one("SELECT * FROM sources WHERE id=?", (sid,))
     if s is None:
         return back("/sources")
-    sql, args = "SELECT * FROM media WHERE source_id=?", [sid]
-    if status:
-        sql += " AND status=?"
-        args.append(status)
-    media = db.q(sql + " ORDER BY upload_date IS NULL, upload_date DESC, id DESC LIMIT 500", args)
-    return page(request, "source.html", s=s, media=media, counts=counts(sid), status=status,
+    where, args = media_where(status, source_id=sid)
+    media = db.q("SELECT m.*, s.name source FROM media m JOIN sources s ON s.id=m.source_id" + where +
+                 " ORDER BY m.upload_date IS NULL, m.upload_date DESC, m.id DESC LIMIT 500", args)
+    return page(request, "source.html", s=s, media=media, counts=counts(sid), status=status, total=deletable(where, args),
                 profiles=db.q("SELECT * FROM profiles ORDER BY id"), indexing=worker.state["indexing"] == sid,
                 urls=ytdl.source_urls(s))
 
@@ -255,16 +286,10 @@ async def delete_source(request: Request, sid: int):
 
 @app.get("/media", response_class=HTMLResponse)
 def media(request: Request, status: str = "", q: str = ""):
-    sql = "SELECT m.*, s.name source FROM media m JOIN sources s ON s.id=m.source_id WHERE 1=1"
-    args = []
-    if status:
-        sql += " AND m.status=?"
-        args.append(status)
-    if q:
-        sql += " AND m.title LIKE ?"
-        args.append(f"%{q}%")
-    rows = db.q(sql + " ORDER BY COALESCE(m.downloaded, m.found) DESC LIMIT 500", args)
-    return page(request, "media.html", media=rows, status=status, q=q, counts=counts())
+    where, args = media_where(status, q)
+    rows = db.q("SELECT m.*, s.name source FROM media m JOIN sources s ON s.id=m.source_id" + where +
+                " ORDER BY COALESCE(m.downloaded, m.found) DESC LIMIT 500", args)
+    return page(request, "media.html", media=rows, status=status, q=q, counts=counts(), total=deletable(where, args))
 
 
 @app.post("/media/{mid}/{action}")
@@ -278,8 +303,25 @@ async def media_action(request: Request, mid: int, action: str):
     elif action == "skip":
         db.run("UPDATE media SET status='skipped' WHERE id=?", (mid,))
     elif action == "delete":
-        ytdl.delete_files(m)
-        db.run("UPDATE media SET status='deleted', filepath=NULL WHERE id=?", (mid,))
+        if delete_media([m]):
+            db.log("info", f"Deleted {m['title']}")
+    return back(request.headers.get("referer") or "/media")
+
+
+@app.post("/media/bulk-delete")
+async def media_bulk_delete(request: Request):
+    """Delete the ticked videos, or (scope=all) every video the current filter shows."""
+    form = await request.form()
+    if form.get("scope") == "all":
+        sid = form.get("source_id")
+        where, args = media_where(form.get("status", ""), form.get("q", ""), int(sid) if sid else None)
+        rows = db.q("SELECT m.* FROM media m" + where, args)
+    else:
+        ids = [int(i) for i in form.getlist("ids") if str(i).isdigit()]
+        rows = db.q(f"SELECT * FROM media WHERE id IN ({','.join('?' * len(ids))})", ids) if ids else []
+    n = delete_media(rows)
+    if n:
+        db.log("info", f"Deleted {n} video(s) and their files")
     return back(request.headers.get("referer") or "/media")
 
 

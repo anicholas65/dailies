@@ -53,3 +53,27 @@ document.querySelectorAll('form').forEach(f => {
   q.addEventListener('change', () => sync('quality'));
   c.addEventListener('change', () => sync('container'));
 });
+
+// Select videos for bulk delete
+(function () {
+  const bar = document.getElementById('bulk');
+  if (!bar) return;
+  const boxes = () => [...document.querySelectorAll('input[name=ids][form=bulk]')];
+  const all = bar.querySelector('[data-select-all]');
+  function sync() {
+    const picked = boxes().filter(b => b.checked);
+    const n = picked.length;
+    bar.hidden = n === 0;
+    bar.querySelector('[data-selected]').textContent = `${n} selected`;
+    all.checked = n > 0 && n === boxes().length;
+    all.indeterminate = n > 0 && n < boxes().length;
+    bar.dataset.confirm = `Delete ${n} video${n === 1 ? '' : 's'} and their files from disk? ` +
+      "They won't be downloaded again unless you choose Download.";
+    picked.forEach(b => b.closest('.frame').classList.add('picked'));
+    boxes().filter(b => !b.checked).forEach(b => b.closest('.frame').classList.remove('picked'));
+  }
+  document.addEventListener('change', e => { if (e.target.matches('input[name=ids][form=bulk]')) sync(); });
+  all.addEventListener('change', () => { boxes().forEach(b => { b.checked = all.checked; }); sync(); });
+  bar.querySelector('[data-clear]').addEventListener('click', () => { boxes().forEach(b => { b.checked = false; }); sync(); });
+  sync();
+})();

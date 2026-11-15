@@ -5,6 +5,7 @@
 {% macro media_row(m, show_source=true) %}
 {% set url = 'https://www.youtube.com/watch?v=' ~ m.video_id %}
 <article class="frame {{ m.status }}" data-media="{{ m.id }}">
+  {% if m.status not in ('downloading','deleted') %}<label class="pick" title="Select"><input type="checkbox" name="ids" value="{{ m.id }}" form="bulk" aria-label="Select {{ m.title }}"></label>{% endif %}
   <a class="reel" href="{{ url }}" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">
     <img src="https://i.ytimg.com/vi/{{ m.video_id }}/mqdefault.jpg" alt="" loading="lazy" width="320" height="180">
     <div class="prog" hidden><span></span><em></em></div>
@@ -18,12 +19,27 @@
     {% if m.status != 'downloaded' %}{{ badge(m.status) }}{% endif %}
   </div>
   {% if m.error and m.status in ('failed','skipped') %}<p class="err" title="{{ m.error }}">{{ m.error }}</p>{% endif %}
-  {% if m.status in ('pending','skipped','deleted','failed','queued','downloaded') %}
+  {% if m.status != 'downloading' %}
   <div class="actions">
     {% if m.status in ('pending','skipped','deleted') %}<form method="post" action="/media/{{ m.id }}/queue"><button class="sm">Download</button></form>{% endif %}
     {% if m.status == 'failed' %}<form method="post" action="/media/{{ m.id }}/retry"><button class="sm">Retry</button></form>{% endif %}
     {% if m.status in ('pending','queued','failed') %}<form method="post" action="/media/{{ m.id }}/skip"><button class="sm ghost">Skip</button></form>{% endif %}
-    {% if m.status == 'downloaded' %}<form method="post" action="/media/{{ m.id }}/delete" data-confirm="Delete this video's file from disk?"><button class="sm ghost">Delete file</button></form>{% endif %}
+    {% if m.status != 'deleted' %}<form method="post" action="/media/{{ m.id }}/delete" data-confirm="{{ 'Delete this video and its files from disk?' if m.filepath else 'Delete this video?' }} It won't be downloaded again unless you choose Download."><button class="sm ghost">Delete</button></form>{% endif %}
   </div>{% endif %}
 </article>
+{% endmacro %}
+
+{% macro bulk_bar(total, status='', q='', source_id=None) %}
+<form id="bulk" method="post" action="/media/bulk-delete" class="bulk" hidden data-confirm="Delete the selected videos and their files from disk? They won't be downloaded again unless you choose Download.">
+  <label class="pick-all"><input type="checkbox" data-select-all> <span data-selected>0 selected</span></label>
+  <button class="sm bad">Delete selected</button>
+  <button type="button" class="sm ghost" data-clear>Clear</button>
+</form>
+{% if total %}
+<form method="post" action="/media/bulk-delete" data-confirm="Delete all {{ total }} video{{ '' if total == 1 else 's' }} shown here, and their files on disk? They won't be downloaded again unless you choose Download.">
+  <input type="hidden" name="scope" value="all"><input type="hidden" name="status" value="{{ status }}"><input type="hidden" name="q" value="{{ q }}">
+  {% if source_id %}<input type="hidden" name="source_id" value="{{ source_id }}">{% endif %}
+  <button class="sm bad">Delete all shown ({{ total }})</button>
+</form>
+{% endif %}
 {% endmacro %}
