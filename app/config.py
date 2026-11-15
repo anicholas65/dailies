@@ -17,6 +17,10 @@ SCREEN = os.environ.get("DAILIES_SCREEN", "1280x800")
 # {channel} = the video's YouTube channel, {source} = the Dailies source name.
 VIDEO_TEMPLATE = "{channel}/Season %(dailies_season)s/s%(dailies_season)se%(dailies_episode)06d - %(title)s [%(id)s].%(ext)s"
 AUDIO_TEMPLATE = "{channel}/%(upload_date>%Y-%m-%d)s - %(title)s [%(id)s].%(ext)s"
+# Movies layout (Movies/Concerts folders): one folder per video, as Jellyfin expects for films.
+MOVIE_TEMPLATE = "%(title)s (%(upload_date>%Y)s) [%(id)s]/%(title)s (%(upload_date>%Y)s) [%(id)s].%(ext)s"
+# Music layout (MP3 folder): artist = channel.
+MUSIC_TEMPLATE = "{channel}/%(title)s [%(id)s].%(ext)s"
 LEGACY_TEMPLATE = "{source}/%(upload_date>%Y-%m-%d)s - %(title)s [%(id)s].%(ext)s"  # default before 0.1.6
 SCHEDULER = os.environ.get("DAILIES_SCHEDULER", "1") != "0"
 

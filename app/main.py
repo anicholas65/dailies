@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, browser, config, db, worker, ytdl
+from . import __version__, browser, config, db, folders, worker, ytdl
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
@@ -146,6 +146,7 @@ def counts(source_id=None):
 SOURCE_FIELDS = {
     "name": str, "url": str, "kind": str, "profile_id": int, "interval_hours": float, "max_items": int,
     "download_after": str, "title_filter": str, "title_exclude": str, "min_duration": int, "keep_days": int,
+    "folder_id": int,  # 0/blank = automatic (default folder for the profile)
 }
 SOURCE_FLAGS = ("enabled", "auto_download", "include_shorts", "include_live")
 PROFILE_FIELDS = {"name": str, "quality": str, "container": str, "output": str, "subtitles": str,
@@ -166,6 +167,8 @@ async def form_values(request, fields, flags):
                 vals[k] = 0
     for k in flags:
         vals[k] = 1 if form.get(k) else 0
+    if "folder_id" in vals and not vals["folder_id"]:
+        vals["folder_id"] = None
     return vals
 
 
@@ -197,6 +200,7 @@ def sources(request: Request):
         FROM sources s JOIN profiles p ON p.id=s.profile_id LEFT JOIN media m ON m.source_id=s.id
         GROUP BY s.id ORDER BY s.name COLLATE NOCASE""")
     return page(request, "sources.html", sources=rows, profiles=db.q("SELECT * FROM profiles ORDER BY id"),
+                folders=folders.all_folders(), folder_names={f["id"]: f["name"] for f in folders.all_folders()},
                 feeds=ytdl.FEEDS, indexing=worker.state["indexing"], auth=browser.status())
 
 
@@ -236,6 +240,8 @@ def source_detail(request: Request, sid: int, status: str = ""):
                  " ORDER BY m.upload_date IS NULL, m.upload_date DESC, m.id DESC LIMIT 500", args)
     return page(request, "source.html", s=s, media=media, counts=counts(sid), status=status, total=deletable(where, args),
                 profiles=db.q("SELECT * FROM profiles ORDER BY id"), indexing=worker.state["indexing"] == sid,
+                folders=folders.all_folders(),
+                dest=folders.for_source(s, db.one("SELECT * FROM profiles WHERE id=?", (s["profile_id"],))),
                 urls=ytdl.source_urls(s))
 
 
@@ -491,12 +497,74 @@ async def vnc_proxy(ws: WebSocket):
 # ---- settings / log / api --------------------------------------------------------
 
 @app.get("/settings", response_class=HTMLResponse)
-def settings(request: Request):
+def settings(request: Request, msg: str = ""):
     import yt_dlp.version
     vals = {k: db.setting(k) for k in db.DEFAULT_SETTINGS}
+    used = {r["folder_id"]: r["n"] for r in db.q("SELECT folder_id, COUNT(*) n FROM sources GROUP BY folder_id")}
+    rows = [dict(f, check=folders.check(f["path"]), sources=used.get(f["id"], 0)) for f in folders.all_folders()]
     return page(request, "settings.html", s=vals, ytdlp=yt_dlp.version.__version__,
-                downloads=config.DOWNLOADS_DIR,
+                downloads=config.DOWNLOADS_DIR, folders=rows, layouts=folders.LAYOUTS, msg=msg,
+                default_folder=db.setting("default_folder"), default_audio_folder=db.setting("default_audio_folder"),
                 log=db.q("SELECT * FROM log ORDER BY id DESC LIMIT 200"))
+
+
+def folder_values(form) -> tuple[dict, str]:
+    vals = {"name": str(form.get("name", "")).strip(), "path": str(form.get("path", "")).strip().rstrip("/") or "/",
+            "layout": str(form.get("layout", "shows"))}
+    if vals["layout"] not in folders.LAYOUTS:
+        vals["layout"] = "shows"
+    if not vals["name"]:
+        return vals, "Give the folder a name."
+    if not vals["path"].startswith("/"):
+        return vals, "Use a full path inside the container, e.g. /media/Movies."
+    return vals, ""
+
+
+def settings_msg(msg: str):
+    from urllib.parse import urlencode
+    return back("/settings?" + urlencode({"msg": msg}) + "#folders" if msg else "/settings#folders")
+
+
+@app.post("/settings/folders")
+async def add_folder(request: Request):
+    vals, err = folder_values(await request.form())
+    if err:
+        return settings_msg(err)
+    db.run("INSERT INTO folders(name, path, layout) VALUES (?, ?, ?)", (vals["name"], vals["path"], vals["layout"]))
+    return settings_msg(f"Added {vals['name']}.")
+
+
+@app.post("/settings/folders/defaults")
+async def folder_defaults(request: Request):
+    form = await request.form()
+    for k in ("default_folder", "default_audio_folder"):
+        if db.one("SELECT 1 FROM folders WHERE id=?", (str(form.get(k, "")),)):
+            db.set_setting(k, str(form[k]))
+    return settings_msg("Saved the default folders.")
+
+
+@app.post("/settings/folders/{fid}")
+async def edit_folder(request: Request, fid: int):
+    vals, err = folder_values(await request.form())
+    if err:
+        return settings_msg(err)
+    db.run("UPDATE folders SET name=?, path=?, layout=? WHERE id=?", (vals["name"], vals["path"], vals["layout"], fid))
+    return settings_msg(f"Saved {vals['name']}. Files already downloaded stay where they are until you run "
+                        "Rename & refresh.")
+
+
+@app.post("/settings/folders/{fid}/delete")
+def delete_folder(fid: int):
+    f = db.one("SELECT * FROM folders WHERE id=?", (fid,))
+    if f is None:
+        return settings_msg("")
+    n = db.one("SELECT COUNT(*) n FROM sources WHERE folder_id=?", (fid,))["n"]
+    if n:
+        return settings_msg(f"{f['name']} is used by {n} source(s). Move them to another folder first.")
+    if str(fid) in (db.setting("default_folder"), db.setting("default_audio_folder")):
+        return settings_msg(f"{f['name']} is a default folder. Pick another default first.")
+    db.run("DELETE FROM folders WHERE id=?", (fid,))
+    return settings_msg(f"Removed {f['name']}. No files were deleted.")
 
 
 @app.post("/settings")

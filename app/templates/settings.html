@@ -2,7 +2,43 @@
 {% block title %}Settings · Dailies{% endblock %}
 {% block body %}
 <h1>Settings</h1>
-<p class="lede">Download limits, the schedule and the activity log.</p>
+<p class="lede">Where downloads are saved, download limits, the schedule and the activity log.</p>
+{% if msg %}<div class="banner">{{ msg }}</div>{% endif %}
+<section class="card" id="folders">
+  <h2>Download folders</h2>
+  <p class="muted">Each source saves into one of these. Paths are inside the container: <code>{{ downloads }}</code> is your Downloads mapping; for others, add a Path in the Unraid container settings (for example container <code>/media</code> → host <code>/mnt/user/Data/Media</code>). In Jellyfin, add each folder as a library of the type shown.</p>
+  <table class="list folders">
+    <thead><tr><th>Name</th><th>Path in container</th><th>Jellyfin layout</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for f in folders %}
+    <tr>
+      <td><input name="name" value="{{ f.name }}" form="folder-{{ f.id }}" required aria-label="Name"></td>
+      <td class="title"><input name="path" value="{{ f.path }}" form="folder-{{ f.id }}" required aria-label="Path">
+        <div class="sub {{ 'err' if not f.check[0] }}">{{ f.check[2] or layouts[f.layout][1] }}{% if f.sources %} Used by {{ f.sources }} source{{ '' if f.sources == 1 else 's' }}.{% endif %}</div></td>
+      <td><select name="layout" form="folder-{{ f.id }}" aria-label="Layout">{% for k, l in layouts.items() %}<option value="{{ k }}" {{ 'selected' if f.layout == k }}>{{ l[0] }}</option>{% endfor %}</select></td>
+      <td class="nowrap"><span class="badge {{ 'downloaded' if f.check[0] else 'failed' }}">{{ f.check[1] }}</span></td>
+      <td class="actions">
+        <form id="folder-{{ f.id }}" method="post" action="/settings/folders/{{ f.id }}"><button class="sm ghost">Save</button></form>
+        <form method="post" action="/settings/folders/{{ f.id }}/delete" data-confirm="Remove the {{ f.name }} folder from Dailies? Files on disk are not deleted."><button class="sm ghost">Remove</button></form>
+      </td>
+    </tr>
+    {% endfor %}
+    <tr>
+      <td><input name="name" form="folder-new" placeholder="New folder" required aria-label="New folder name"></td>
+      <td class="title"><input name="path" form="folder-new" placeholder="/media/Documentaries" required aria-label="New folder path"></td>
+      <td><select name="layout" form="folder-new" aria-label="New folder layout">{% for k, l in layouts.items() %}<option value="{{ k }}">{{ l[0] }}</option>{% endfor %}</select></td>
+      <td></td>
+      <td class="actions"><form id="folder-new" method="post" action="/settings/folders"><button class="sm">Add folder</button></form></td>
+    </tr>
+    </tbody>
+  </table>
+  <form method="post" action="/settings/folders/defaults" class="grid defaults">
+    <label>Video sources go to <select name="default_folder">{% for f in folders %}<option value="{{ f.id }}" {{ 'selected' if f.id|string == default_folder }}>{{ f.name }}</option>{% endfor %}</select></label>
+    <label>Audio-only sources go to <select name="default_audio_folder">{% for f in folders %}<option value="{{ f.id }}" {{ 'selected' if f.id|string == default_audio_folder }}>{{ f.name }}</option>{% endfor %}</select></label>
+    <div class="wide"><small>Used when a source's folder is set to Automatic. Pick a specific folder on any source to override it.</small></div>
+    <div class="wide row"><button class="sm">Save defaults</button></div>
+  </form>
+</section>
 <section class="card">
   <h2>Downloads</h2>
   <form method="post" action="/settings" class="grid">
@@ -13,7 +49,7 @@
     <div class="wide checks"><label><input type="checkbox" name="scheduler" {{ 'checked' if s.scheduler == '1' }}> Check sources on their schedule</label></div>
     <div class="wide row"><button>Save</button></div>
   </form>
-  <p class="muted">Files are saved under <code>{{ downloads }}</code>. yt-dlp {{ ytdlp }} — set <code>YTDLP_AUTO_UPDATE=1</code> (default) and restart the container to update it.</p>
+  <p class="muted">yt-dlp {{ ytdlp }} — set <code>YTDLP_AUTO_UPDATE=1</code> (default) and restart the container to update it.</p>
 </section>
 <section class="card">
   <h2>Activity log</h2>

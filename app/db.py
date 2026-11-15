@@ -64,6 +64,12 @@ CREATE TABLE IF NOT EXISTS media (
 );
 CREATE INDEX IF NOT EXISTS media_status ON media(status);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS folders (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  path TEXT NOT NULL,                        -- inside the container
+  layout TEXT NOT NULL DEFAULT 'shows'       -- shows|movies|music
+);
 CREATE TABLE IF NOT EXISTS log (
   id INTEGER PRIMARY KEY,
   at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -155,6 +161,8 @@ def init():
         if "refresh" not in mcols:  # 0.1.7: queued rename + metadata refresh of an existing file
             conn.execute("ALTER TABLE media ADD COLUMN refresh INTEGER NOT NULL DEFAULT 0")
         cols = {r[1] for r in conn.execute("PRAGMA table_info(sources)")}
+        if "folder_id" not in cols:  # 0.1.12: per-source download folder (NULL = default for profile)
+            conn.execute("ALTER TABLE sources ADD COLUMN folder_id INTEGER")
         if "auto_name" not in cols:  # 0.1.5: name the source from YouTube on first index
             conn.execute("ALTER TABLE sources ADD COLUMN auto_name INTEGER NOT NULL DEFAULT 0")
         for k, v in DEFAULT_SETTINGS.items():
@@ -179,6 +187,8 @@ def init():
         if not conn.execute("SELECT 1 FROM settings WHERE key='jellyfin_layout'").fetchone():
             conn.execute("UPDATE profiles SET output='' WHERE output=?", (config.LEGACY_TEMPLATE,))
             conn.execute("INSERT INTO settings(key, value) VALUES ('jellyfin_layout', '1')")
+        from . import folders
+        folders.seed(conn)
         # downloads interrupted by a restart go back to the queue
         conn.execute("UPDATE media SET status='queued' WHERE status='downloading'")
 

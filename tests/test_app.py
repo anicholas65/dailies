@@ -297,7 +297,7 @@ def test_jellyfin_layout(client):
     assert o["outtmpl"]["default"].endswith("%(dailies_channel)s/Season %(dailies_season)s/s%(dailies_season)se%(dailies_episode)06d - %(title)s [%(id)s].%(ext)s")
     assert o["outtmpl"]["thumbnail"].endswith("[%(id)s]-thumb.%(ext)s")
     a = ytdl.profile_opts(db.one("SELECT * FROM profiles WHERE name='Audio (MP3)'"), src)
-    assert a["outtmpl"]["default"].endswith(config.AUDIO_TEMPLATE.replace("{channel}", "%(dailies_channel)s"))
+    assert a["outtmpl"]["default"] == "/media/Music/%(dailies_channel)s/%(title)s [%(id)s].%(ext)s"  # MP3 folder
     from pathlib import Path
     assert ytdl.show_dir(Path("/d/Chan/Season 2026/x.mp4")) == Path("/d/Chan")
 
@@ -450,3 +450,57 @@ def test_delete_all_shown_respects_filter(client):
     assert "Delete all shown (1)" in client.get(f"/sources/{s2}").text
     client.post("/media/bulk-delete", data={"scope": "all", "status": "", "q": ""})
     assert set(st2 := {r["status"] for r in db.q("SELECT status FROM media")}) == {"deleted", "downloading"}, st2
+
+
+def test_download_folders(client, tmp_path):
+    from app import config, folders
+    names = {f["name"]: f for f in folders.all_folders()}
+    assert list(names) == ["YouTube", "Educational", "Movies", "Concerts", "MP3"]
+    assert names["YouTube"]["path"] == str(config.DOWNLOADS_DIR) and names["Movies"]["layout"] == "movies"
+    video = db.one("SELECT * FROM profiles WHERE name='1080p MP4'")
+    mp3 = db.one("SELECT * FROM profiles WHERE name='Audio (MP3)'")
+    sid = db.run("INSERT INTO sources(name, url, kind, profile_id) VALUES ('S', 'u', 'video', ?)", (video["id"],))
+    src = lambda: db.one("SELECT * FROM sources WHERE id=?", (sid,))  # noqa: E731
+    assert folders.for_source(src(), video)["name"] == "YouTube"  # automatic: video -> YouTube
+    assert folders.for_source(src(), mp3)["name"] == "MP3"        # automatic: audio -> MP3
+    # pick Movies on the source page
+    movies = tmp_path / "Movies"
+    client.post(f"/settings/folders/{names['Movies']['id']}", data={"name": "Movies", "path": str(movies), "layout": "movies"})
+    client.post(f"/sources/{sid}/edit", data={"name": "S", "url": "u", "folder_id": str(names["Movies"]["id"])})
+    assert folders.for_source(src(), video)["name"] == "Movies"
+    o = ytdl.profile_opts(video, src())
+    assert o["outtmpl"]["default"] == str(movies / config.MOVIE_TEMPLATE)
+    client.post(f"/sources/{sid}/edit", data={"name": "S", "url": "u", "folder_id": ""})
+    assert src()["folder_id"] is None
+    # add / delete folders from Settings
+    client.post("/settings/folders", data={"name": "Kids", "path": str(tmp_path / "Kids"), "layout": "shows"})
+    kids = db.one("SELECT * FROM folders WHERE name='Kids'")
+    page = client.get("/settings").text
+    assert "Kids" in page and "Folder is created on the first download." in page
+    assert "Use a full path" in client.post("/settings/folders", data={"name": "X", "path": "rel/x", "layout": "shows"},
+                                            follow_redirects=True).text
+    client.post(f"/settings/folders/{kids['id']}/delete")
+    assert db.one("SELECT 1 FROM folders WHERE name='Kids'") is None
+    # a folder still used by a source can't be deleted
+    client.post(f"/sources/{sid}/edit", data={"name": "S", "url": "u", "folder_id": str(names["Concerts"]["id"])})
+    client.post(f"/settings/folders/{names['Concerts']['id']}/delete")
+    assert db.one("SELECT 1 FROM folders WHERE name='Concerts'")
+
+
+def test_movie_files_and_cleanup(client, tmp_path):
+    from app import folders
+    db.run("UPDATE folders SET path=? WHERE name='Movies'", (str(tmp_path / "Movies"),))
+    d = tmp_path / "Movies" / "Live at Wembley (2026) [abc]"
+    d.mkdir(parents=True)
+    f = d / "Live at Wembley (2026) [abc].mp4"
+    f.write_bytes(b"v")
+    f.with_name(f.stem + "-thumb.jpg").write_bytes(b"\xff\xd8\xffT")
+    info = {"title": "Live at Wembley", "upload_date": "20260704", "id": "abc", "channel": "Band", "duration": 5400}
+    ytdl.write_movie_files(f, info, None)
+    nfo = f.with_suffix(".nfo").read_text()
+    assert "<movie>" in nfo and "<year>2026</year>" in nfo and "<runtime>90</runtime>" in nfo
+    assert (d / "poster.jpg").read_bytes() == b"\xff\xd8\xffT" == (d / "fanart.jpg").read_bytes()
+    assert folders.root_of(f) == (tmp_path / "Movies").resolve()
+    ytdl.delete_files({"filepath": str(f)})
+    assert not d.exists() and (tmp_path / "Movies").exists()  # movie folder gone, library root kept
+    ytdl.delete_files({"filepath": "/etc/passwd"})  # outside every folder: ignored

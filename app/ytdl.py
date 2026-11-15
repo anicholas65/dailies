@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yt_dlp
 
-from . import browser, config, db
+from . import browser, config, db, folders
 
 QUALITY_FORMATS = {
     "best": "bv*+ba/b",
@@ -94,19 +94,28 @@ def parse_rate(text: str) -> int | None:
     return int(float(m.group(1)) * mult)
 
 
-def profile_template(profile) -> str:
-    return profile["output"] or (config.AUDIO_TEMPLATE if profile["quality"] == "audio" else config.VIDEO_TEMPLATE)
+def profile_template(profile, layout: str = "shows") -> str:
+    """A profile's custom output template wins; otherwise the folder's layout decides."""
+    audio = profile["quality"] == "audio"
+    if profile["output"]:
+        return profile["output"]
+    if layout == "music" or (audio and layout == "movies"):
+        return config.MUSIC_TEMPLATE
+    if layout == "movies":
+        return config.MOVIE_TEMPLATE
+    return config.AUDIO_TEMPLATE if audio else config.VIDEO_TEMPLATE
 
 
-def by_channel(profile) -> bool:
+def by_channel(profile, layout: str = "shows") -> bool:
     """Shows are named after the publisher (else after the Dailies source)."""
-    return "{channel}" in profile_template(profile)
+    return "{channel}" in profile_template(profile, layout)
 
 
 def profile_opts(profile, source) -> dict:
     audio = profile["quality"] == "audio"
-    folder = config.DOWNLOADS_DIR
-    template = profile_template(profile).replace("{source}", safe_name(source["name"]))
+    dest = folders.for_source(source, profile)
+    folder = Path(dest["path"])
+    template = profile_template(profile, dest["layout"]).replace("{source}", safe_name(source["name"]))
     template = template.replace("{channel}", "%(dailies_channel)s")  # filled in by episode_fields
     opts = {
         "format": QUALITY_FORMATS.get(profile["quality"], QUALITY_FORMATS["best"]),
@@ -275,20 +284,23 @@ def download(media_id: int) -> str:
         elif d["status"] == "finished":
             p["percent"] = 100
 
+    dest = folders.for_source(source, profile)
     opts = base_opts() | profile_opts(profile, source) | {"progress_hooks": [hook]}
     try:
+        usable, _, why = folders.check(dest["path"])
+        if not usable:
+            raise RuntimeError(f"Download folder {dest['name']}: {why}")
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(item["url"], download=False)
             if reason := skip_reason(source, info):
                 db.run("UPDATE media SET status='skipped', error=?, title=?, upload_date=? WHERE id=?",
                        (reason, info.get("title") or item["title"], info.get("upload_date"), media_id))
                 return "skipped"
-            info.update(episode_fields(media_id, source, info, by_channel(profile)))
+            info.update(episode_fields(media_id, source, info, by_channel(profile, dest["layout"])))
             info = ydl.process_ie_result(info, download=True)
             path = final_path(info)
-            if path and profile["write_nfo"] and profile["quality"] != "audio":
-                write_nfo(Path(path), info, source)
-                write_show_files(show_dir(Path(path)), source, info, ydl)
+            if path:
+                write_sidecars(Path(path), info, source, profile, dest["layout"], ydl)
         size = Path(path).stat().st_size if path and Path(path).exists() else None
         db.run("UPDATE media SET status='downloaded', filepath=?, filesize=?, title=?, upload_date=?, duration=?, "
                "downloaded=datetime('now') WHERE id=?",
@@ -357,23 +369,20 @@ def _refresh(media_id: int) -> str:
         db.log("warn", f"Refresh: file missing for {item['title']}")
         return "missing"
     audio = profile["quality"] == "audio"
+    dest = folders.for_source(source, profile)
     popts = profile_opts(profile, source)
     opts = base_opts() | {"outtmpl": popts["outtmpl"], "windowsfilenames": True, "skip_download": True}
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(item["url"], download=False, process=False)
-            info.update(episode_fields(media_id, source, info, by_channel(profile)))
+            info.update(episode_fields(media_id, source, info, by_channel(profile, dest["layout"])))
             info["ext"] = old.suffix[1:]
             new = Path(ydl.prepare_filename(info))
             new = move_with_sidecars(old, new)
             thumb = new.with_name(new.stem + ("" if audio else "-thumb") + ".jpg")
             if (profile["write_thumbnail"] or profile["embed_thumbnail"]) and (url := best_thumbnail(info)):
                 thumb.write_bytes(to_jpeg(ydl.urlopen(url).read()))
-            if profile["write_nfo"] and not audio:
-                write_nfo(new, info, source)
-                show = show_dir(new)
-                write_show_files(show, source, info, ydl, force=show not in _shows_refreshed)
-                _shows_refreshed.add(show)
+            write_sidecars(new, info, source, profile, dest["layout"], ydl, refreshing=True)
         embed_tags(new, info, profile, thumb if thumb.exists() else None)
         if thumb.exists() and not profile["write_thumbnail"]:
             thumb.unlink()
@@ -383,7 +392,7 @@ def _refresh(media_id: int) -> str:
         return "login" if needs_login(msg) and "Sign in to confirm" in msg else "failed"
     db.run("UPDATE media SET filepath=?, filesize=?, title=?, upload_date=?, error=NULL WHERE id=?",
            (str(new), new.stat().st_size, info.get("title") or item["title"], info.get("upload_date"), media_id))
-    db.log("info", f"Refreshed {info.get('title')} -> {new.relative_to(config.DOWNLOADS_DIR)}")
+    db.log("info", f"Refreshed {info.get('title')} -> {dest['name']}: {new.relative_to(dest['path']) if new.is_relative_to(dest['path']) else new}")
     return "refreshed"
 
 
@@ -405,8 +414,10 @@ def move_with_sidecars(old: Path, new: Path) -> Path:
 
 
 def prune_empty_dirs(folder: Path):
-    root = config.DOWNLOADS_DIR.resolve()
     folder = folder.resolve()
+    root = folders.root_of(folder)
+    if root is None:
+        return
     while folder != root and folder.is_relative_to(root):
         try:
             folder.rmdir()  # only succeeds when empty
@@ -474,6 +485,51 @@ def show_dir(path: Path) -> Path:
 
 def _aired(date: str | None) -> str:
     return f"{date[:4]}-{date[4:6]}-{date[6:]}" if date and len(date) == 8 else ""
+
+
+def write_sidecars(path: Path, info, source, profile, layout: str, ydl, refreshing: bool = False):
+    """NFOs and artwork for the folder's Jellyfin layout. Music: tags + cover only (already embedded)."""
+    if not profile["write_nfo"] or profile["quality"] == "audio" or layout == "music":
+        return
+    if layout == "movies":
+        write_movie_files(path, info, ydl, force=refreshing)
+        return
+    write_nfo(path, info, source)
+    show = show_dir(path)
+    write_show_files(show, source, info, ydl, force=refreshing and show not in _shows_refreshed)
+    if refreshing:
+        _shows_refreshed.add(show)
+
+
+def write_movie_files(path: Path, info, ydl, force: bool = False):
+    """Jellyfin movie: <name>.nfo plus poster.jpg/fanart.jpg (the video thumbnail) in its own folder."""
+    e = lambda v: html.escape(str(v or ""))  # noqa: E731
+    aired = _aired(info.get("upload_date"))
+    tags = "".join(f"  <tag>{e(t)}</tag>\n" for t in (info.get("tags") or [])[:20])
+    genres = "".join(f"  <genre>{e(g)}</genre>\n" for g in info.get("categories") or [])
+    path.with_suffix(".nfo").write_text(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<movie>\n'
+        f"  <title>{e(info.get('title'))}</title>\n"
+        f"  <plot>{e(info.get('description'))}</plot>\n"
+        f"  <year>{e((info.get('upload_date') or '')[:4])}</year>\n"
+        f"  <premiered>{aired}</premiered>\n"
+        f"  <studio>{e(info.get('channel') or info.get('uploader'))}</studio>\n"
+        f"  <runtime>{int((info.get('duration') or 0) // 60)}</runtime>\n"
+        f"{genres}{tags}"
+        f"  <uniqueid type=\"youtube\" default=\"true\">{e(info.get('id'))}</uniqueid>\n"
+        "</movie>\n", encoding="utf-8")
+    targets = [path.parent / n for n in ("poster.jpg", "fanart.jpg") if force or not (path.parent / n).exists()]
+    if not targets:
+        return
+    thumb = path.with_name(path.stem + "-thumb.jpg")
+    try:
+        data = thumb.read_bytes() if thumb.exists() else \
+            (to_jpeg(ydl.urlopen(url).read()) if (url := best_thumbnail(info)) else None)
+    except Exception as exc:  # artwork is nice-to-have
+        db.log("warn", f"Movie artwork for {info.get('title')}: {clean_error(exc)[:200]}")
+        return
+    for t in targets if data else []:
+        t.write_bytes(data)
 
 
 def write_nfo(path: Path, info, source):
@@ -555,7 +611,7 @@ def apply_retention():
             db.log("info", f"Retention: removed {m['title']}")
 
 
-SHOW_FILES = {"tvshow.nfo", "poster.jpg", "fanart.jpg"}
+SHOW_FILES = {"tvshow.nfo", "poster.jpg", "fanart.jpg"}  # also a movie folder's artwork
 
 
 def delete_files(item):
@@ -564,7 +620,8 @@ def delete_files(item):
     if not item["filepath"]:
         return
     p = Path(item["filepath"])
-    if not p.resolve().is_relative_to(config.DOWNLOADS_DIR.resolve()):
+    root = folders.root_of(p)
+    if root is None:
         return
     stem = p.with_suffix("")
     for f in [p, *p.parent.glob(glob_escape(stem.name) + ".*"), *p.parent.glob(glob_escape(stem.name) + "-thumb.*")]:
@@ -576,7 +633,7 @@ def delete_files(item):
     show = show_dir(p)
     prune_empty_dirs(p.parent)
     try:
-        if show.is_dir() and show.resolve() != config.DOWNLOADS_DIR.resolve() and \
+        if show.is_dir() and show.resolve() not in folders.roots() and \
                 {f.name for f in show.iterdir()} <= SHOW_FILES:
             for f in show.iterdir():
                 f.unlink()
