@@ -308,3 +308,30 @@ def test_legacy_template_migrates(client):
     db.reset()
     db.init()
     assert db.one("SELECT output FROM profiles WHERE id=1")["output"] == ""
+
+
+def test_refresh_buttons_queue_and_missing_file(client, monkeypatch):
+    sid = db.run("INSERT INTO sources(name, url, kind, profile_id) VALUES ('S', 'u', 'channel', 1)")
+    mid = db.run("INSERT INTO media(source_id, video_id, title, url, status, filepath) "
+                 "VALUES (?, 'a', 't', 'u', 'downloaded', '/nope/x.mp4')", (sid,))
+    assert "Rename &amp; refresh files" in client.get(f"/sources/{sid}").text
+    assert "Rename &amp; refresh all files" in client.get("/media").text
+    client.post(f"/sources/{sid}/refresh")
+    assert db.one("SELECT refresh FROM media WHERE id=?", (mid,))["refresh"] == 1
+    assert "refreshing 1 file" in client.get("/").text
+    assert ytdl.refresh(mid) == "missing"
+    row = db.one("SELECT * FROM media WHERE id=?", (mid,))
+    assert row["status"] == "deleted" and row["refresh"] == 0
+
+
+def test_move_with_sidecars(client, tmp_path):
+    from app import config
+    d = config.DOWNLOADS_DIR / "Old"
+    d.mkdir(parents=True)
+    old = d / "2026-05-23 - T [a].mp4"
+    for name in (old.name, "2026-05-23 - T [a].jpg", "2026-05-23 - T [a].nfo", "2026-05-23 - T [a].en.vtt"):
+        (d / name).write_text("x")
+    new = config.DOWNLOADS_DIR / "New" / "Season 2026" / "s2026e052301 - T [a].mp4"
+    assert ytdl.move_with_sidecars(old, new) == new
+    assert sorted(p.name for p in new.parent.iterdir()) == ["s2026e052301 - T [a].en.vtt", "s2026e052301 - T [a].mp4"]
+    assert not d.exists()  # emptied folder pruned

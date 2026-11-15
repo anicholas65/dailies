@@ -9,6 +9,7 @@
   </select>
   <button class="sm">Filter</button>
 </form>
+{% if counts.get('downloaded') %}<div class="row"><form method="post" action="/media/refresh-all" data-confirm="Rename files to the profile's current layout and rewrite thumbnails, NFOs and tags from YouTube? Nothing is re-downloaded."><button class="sm ghost">Rename &amp; refresh all files</button></form></div>{% endif %}
 <section class="card">
   {% if media %}<table class="list"><tbody>{% for m in media %}{{ media_row(m) }}{% endfor %}</tbody></table>
   {% else %}<p class="muted">Nothing here.</p>{% endif %}

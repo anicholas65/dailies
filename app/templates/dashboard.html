@@ -19,6 +19,7 @@
       {% else %}<form method="post" action="/queue/pause"><button class="sm ghost">Pause</button></form>{% endif %}
     </div>
   </div>
+  {% if refreshing %}<p class="muted">Renaming &amp; refreshing {{ refreshing }} file(s) after downloads finish…</p>{% endif %}
   {% if queue %}
   <table class="list"><tbody>{% for m in queue %}{{ media_row(m) }}{% endfor %}</tbody></table>
   {% else %}<p class="muted">Nothing queued. {% if not sources %}<a href="/sources">Add a channel or playlist</a> to get started.{% endif %}</p>{% endif %}

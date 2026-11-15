@@ -60,11 +60,15 @@ def download_loop():
         row = None if state["paused"] else db.one(
             "SELECT m.id FROM media m JOIN sources s ON s.id=m.source_id "
             "WHERE m.status='queued' ORDER BY m.upload_date IS NULL, m.upload_date DESC, m.id LIMIT 1")
+        job = ytdl.download
+        if row is None and not state["paused"]:
+            row = db.one("SELECT id FROM media WHERE refresh=1 AND status='downloaded' ORDER BY id LIMIT 1")
+            job = ytdl.refresh
         if row is None:
             _wake.wait(30)
             _wake.clear()
             continue
-        if ytdl.download(row["id"]) == "login":
+        if job(row["id"]) == "login":
             # YouTube's bot check fails every request the same way - stop hammering it.
             state["paused"] = True
             state["pause_reason"] = "YouTube wants you signed in (bot check). Sign in, then resume."

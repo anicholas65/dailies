@@ -9,6 +9,7 @@
     {% if indexing %}<span class="badge downloading" data-reload-when-idle>indexing…</span>{% else %}
     <form method="post" action="/sources/{{ s.id }}/index"><button class="sm">Check now</button></form>{% endif %}
     <form method="post" action="/sources/{{ s.id }}/queue-all"><button class="sm ghost">Queue all pending/failed</button></form>
+    {% if counts.get('downloaded') %}<form method="post" action="/sources/{{ s.id }}/refresh" data-confirm="Rename files to the profile's current layout and rewrite thumbnails, NFOs and tags from YouTube? Nothing is re-downloaded."><button class="sm ghost">Rename &amp; refresh files</button></form>{% endif %}
   </div>
 </div>
 {% if s.last_error %}<div class="banner bad">{{ s.last_error }}</div>{% endif %}

@@ -2,6 +2,7 @@
 import datetime as dt
 import html
 import re
+import shutil
 import time
 from pathlib import Path
 
@@ -307,6 +308,106 @@ def resolution_note(info, profile) -> str:
     if profile["quality"].isdigit() and height < int(profile["quality"]):
         note += f", below {profile['quality']}p target - YouTube offered nothing higher"
     return note
+
+
+# ---- refresh existing files (rename + metadata, no re-download) ---------------
+
+SIDECARS_REGENERATED = (".nfo", ".jpg", ".jpeg", ".webp", ".png", "-thumb.jpg", "-thumb.webp", "-thumb.png")
+
+
+def best_thumbnail(info) -> str | None:
+    thumbs = [t for t in info.get("thumbnails") or [] if t.get("url")]
+    if not thumbs:
+        return info.get("thumbnail")
+    best = max(thumbs, key=lambda t: (t.get("preference") or 0, (t.get("width") or 0) * (t.get("height") or 0)))
+    return best["url"]
+
+
+def refresh(media_id: int) -> str:
+    """Move a downloaded file to its profile's current name/layout and rewrite thumbnail, NFO, show
+    artwork and embedded tags from fresh YouTube metadata. The media itself is not re-downloaded."""
+    item = db.one("SELECT * FROM media WHERE id=?", (media_id,))
+    source = db.one("SELECT * FROM sources WHERE id=?", (item["source_id"],))
+    profile = db.one("SELECT * FROM profiles WHERE id=?", (source["profile_id"],))
+    db.run("UPDATE media SET refresh=0 WHERE id=?", (media_id,))
+    old = Path(item["filepath"]) if item["filepath"] else None
+    if not old or not old.is_file():
+        db.run("UPDATE media SET status='deleted', filepath=NULL, error='File missing on refresh - queue it to "
+               "download again' WHERE id=?", (media_id,))
+        db.log("warn", f"Refresh: file missing for {item['title']}")
+        return "missing"
+    audio = profile["quality"] == "audio"
+    popts = profile_opts(profile, source)
+    opts = base_opts() | {"outtmpl": popts["outtmpl"], "windowsfilenames": True, "skip_download": True}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(item["url"], download=False, process=False)
+            info.update(episode_fields(media_id, source, info))
+            info["ext"] = old.suffix[1:]
+            new = Path(ydl.prepare_filename(info))
+            new = move_with_sidecars(old, new)
+            thumb = new.with_name(new.stem + ("" if audio else "-thumb") + ".jpg")
+            if (profile["write_thumbnail"] or profile["embed_thumbnail"]) and (url := best_thumbnail(info)):
+                thumb.write_bytes(to_jpeg(ydl.urlopen(url).read()))
+            if profile["write_nfo"] and not audio:
+                write_nfo(new, info, source)
+                write_show_files(show_dir(new), source, info, ydl)
+        embed_tags(new, info, profile, thumb if thumb.exists() else None)
+        if thumb.exists() and not profile["write_thumbnail"]:
+            thumb.unlink()
+    except Exception as exc:
+        msg = clean_error(exc)
+        db.log("error", f"Refresh failed: {item['title']}: {msg[:300]}")
+        return "login" if needs_login(msg) and "Sign in to confirm" in msg else "failed"
+    db.run("UPDATE media SET filepath=?, filesize=?, title=?, upload_date=?, error=NULL WHERE id=?",
+           (str(new), new.stat().st_size, info.get("title") or item["title"], info.get("upload_date"), media_id))
+    db.log("info", f"Refreshed {info.get('title')} -> {new.relative_to(config.DOWNLOADS_DIR)}")
+    return "refreshed"
+
+
+def move_with_sidecars(old: Path, new: Path) -> Path:
+    """Rename the media file; keep subtitles alongside it, drop thumbnails/NFOs (they get rewritten)."""
+    new.parent.mkdir(parents=True, exist_ok=True)
+    for f in list(old.parent.glob(glob_escape(old.stem) + "*")):
+        tail = f.name[len(old.stem):]
+        if f == old or not f.is_file() or tail[:1] not in (".", "-"):
+            continue
+        if tail.lower() in SIDECARS_REGENERATED:
+            f.unlink()
+        else:
+            shutil.move(f, new.with_name(new.stem + tail))
+    if new != old:
+        shutil.move(old, new)
+        prune_empty_dirs(old.parent)
+    return new
+
+
+def prune_empty_dirs(folder: Path):
+    root = config.DOWNLOADS_DIR.resolve()
+    folder = folder.resolve()
+    while folder != root and folder.is_relative_to(root):
+        try:
+            folder.rmdir()  # only succeeds when empty
+        except OSError:
+            break
+        folder = folder.parent
+
+
+def embed_tags(path: Path, info, profile, thumb: Path | None):
+    """Rewrite embedded metadata/cover via yt-dlp's own postprocessors (stream copy, no re-encode)."""
+    wav = path.suffix.lower() == ".wav"
+    pps = []
+    if profile["embed_metadata"]:
+        # chapters are left as they are: SponsorBlock may already have cut the file
+        pps.append({"key": "FFmpegMetadata", "add_metadata": True, "add_chapters": False})
+    if profile["embed_thumbnail"] and thumb and not wav and path.suffix.lower() != ".webm":
+        pps.append({"key": "EmbedThumbnail", "already_have_thumbnail": True})
+    if not pps:
+        return
+    info = dict(info, filepath=str(path), __files_to_move={}, chapters=None,
+                thumbnails=[{"id": "0", "url": str(thumb), "filepath": str(thumb)}] if thumb else [])
+    with yt_dlp.YoutubeDL({"logger": Quiet(), "quiet": True, "postprocessors": pps}) as ydl:
+        ydl.post_process(str(path), info)
 
 
 def final_path(info) -> str | None:

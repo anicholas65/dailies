@@ -147,8 +147,11 @@ def init():
     config.ensure_dirs()
     with tx() as conn:
         conn.executescript(SCHEMA)
-        if "episode" not in {r[1] for r in conn.execute("PRAGMA table_info(media)")}:  # 0.1.6: Jellyfin episode no.
+        mcols = {r[1] for r in conn.execute("PRAGMA table_info(media)")}
+        if "episode" not in mcols:  # 0.1.6: Jellyfin episode no.
             conn.execute("ALTER TABLE media ADD COLUMN episode INTEGER")
+        if "refresh" not in mcols:  # 0.1.7: queued rename + metadata refresh of an existing file
+            conn.execute("ALTER TABLE media ADD COLUMN refresh INTEGER NOT NULL DEFAULT 0")
         cols = {r[1] for r in conn.execute("PRAGMA table_info(sources)")}
         if "auto_name" not in cols:  # 0.1.5: name the source from YouTube on first index
             conn.execute("ALTER TABLE sources ADD COLUMN auto_name INTEGER NOT NULL DEFAULT 0")

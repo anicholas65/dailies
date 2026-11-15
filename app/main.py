@@ -152,6 +152,7 @@ def dashboard(request: Request):
         failed=db.q("SELECT m.*, s.name source FROM media m JOIN sources s ON s.id=m.source_id "
                     "WHERE m.status='failed' ORDER BY m.id DESC LIMIT 5"),
         paused=worker.state["paused"], pause_reason=worker.state["pause_reason"],
+        refreshing=db.one("SELECT COUNT(*) n FROM media WHERE refresh=1 AND status='downloaded'")["n"],
     )
 
 
@@ -226,6 +227,20 @@ def queue_all(sid: int):
     db.run("UPDATE media SET status='queued' WHERE source_id=? AND status IN ('pending','failed')", (sid,))
     worker.kick()
     return back(f"/sources/{sid}")
+
+
+@app.post("/sources/{sid}/refresh")
+def refresh_source(sid: int):
+    db.run("UPDATE media SET refresh=1 WHERE source_id=? AND status='downloaded'", (sid,))
+    worker.kick()
+    return back(f"/sources/{sid}")
+
+
+@app.post("/media/refresh-all")
+def refresh_all():
+    db.run("UPDATE media SET refresh=1 WHERE status='downloaded'")
+    worker.kick()
+    return back("/media")
 
 
 @app.post("/sources/{sid}/delete")
