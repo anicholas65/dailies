@@ -26,11 +26,25 @@
 <section class="card">
   <h2>Sources</h2>
   {% if sources %}
+  <div class="row source-tools">
+    <label><input type="checkbox" data-files-toggle> Also delete their downloaded files</label>
+    <form method="post" action="/sources/bulk-delete" data-confirm="Delete all {{ sources|length }} source{{ '' if sources|length == 1 else 's' }}?">
+      <input type="hidden" name="scope" value="all"><input type="hidden" name="files" data-files>
+      <button class="sm bad">Delete all sources ({{ sources|length }})</button>
+    </form>
+  </div>
+  <form id="bulk" method="post" action="/sources/bulk-delete" class="bulk" hidden data-noun="source">
+    <input type="hidden" name="files" data-files>
+    <label class="pick-all"><input type="checkbox" data-select-all> <span data-selected>0 selected</span></label>
+    <button class="sm bad">Delete selected</button>
+    <button type="button" class="sm ghost" data-clear>Clear</button>
+  </form>
   <table class="list">
-    <thead><tr><th>Name</th><th>Profile</th><th>Saved to</th><th class="num">Downloaded</th><th class="num">Queued</th><th>Last checked</th><th></th></tr></thead>
+    <thead><tr><th class="check"><span class="vh">Select</span></th><th>Name</th><th>Profile</th><th>Saved to</th><th class="num">Downloaded</th><th class="num">Queued</th><th>Last checked</th><th></th></tr></thead>
     <tbody>
     {% for s in sources %}
     <tr>
+      <td class="check"><input type="checkbox" name="ids" value="{{ s.id }}" form="bulk" aria-label="Select {{ s.name }}"></td>
       <td class="title"><a href="/sources/{{ s.id }}">{{ s.name }}</a>
         <div class="sub">{{ s.kind }} · every {{ s.interval_hours|round(1) }}h{% if not s.enabled %} · <b>disabled</b>{% endif %}</div>
         {% if s.last_error %}<div class="err">{{ s.last_error[:200] }}</div>{% endif %}</td>
@@ -39,7 +53,8 @@
       <td class="num">{{ s.done or 0 }} / {{ s.total or 0 }}</td>
       <td class="num">{{ s.queued or 0 }}{% if s.failed %} <span class="badge failed">{{ s.failed }} failed</span>{% endif %}</td>
       <td class="nowrap">{% if indexing == s.id %}<span class="badge downloading">indexing…</span>{% else %}{{ (s.last_indexed or 'never')[:16] }}{% endif %}</td>
-      <td class="actions"><form method="post" action="/sources/{{ s.id }}/index"><button class="sm ghost">Check now</button></form></td>
+      <td class="actions"><form method="post" action="/sources/{{ s.id }}/index"><button class="sm ghost">Check now</button></form>
+        <form method="post" action="/sources/{{ s.id }}/delete" data-confirm="Delete the source {{ s.name }}?"><input type="hidden" name="files" data-files><button class="sm ghost">Delete</button></form></td>
     </tr>
     {% endfor %}
     </tbody>

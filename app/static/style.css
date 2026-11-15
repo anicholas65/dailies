@@ -164,3 +164,9 @@ input[type=file]{width:auto;max-width:100%}
 }
 @media (max-width:420px){.sheet{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* Sources: select / delete */
+.list .check{width:28px;padding-right:0}.list .check input{width:17px;height:17px;margin:0;cursor:pointer}
+.list tr.picked td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.source-tools{justify-content:space-between;margin-bottom:10px}.source-tools label{display:flex;gap:8px;align-items:center}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}

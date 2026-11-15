@@ -692,3 +692,23 @@ def test_stopping_a_running_download(client, monkeypatch):
     assert ytdl.download(mid) == "stopped"
     m = db.one("SELECT * FROM media WHERE id=?", (mid,))
     assert m["status"] == "stopped" and m["error"] is None and not ytdl.cancel
+
+
+def test_delete_sources_single_selected_all(client):
+    for name in ("A", "B", "C", "D"):
+        client.post("/sources", data={"url": f"https://www.youtube.com/@{name}", "name": name})
+    ids = {r["name"]: r["id"] for r in db.q("SELECT id, name FROM sources")}
+    keep = _video(ids["A"], "aaa")  # downloaded file on disk
+    gone = _video(ids["B"], "bbb")
+    keep_path = db.one("SELECT filepath FROM media WHERE id=?", (keep,))["filepath"]
+    gone_path = db.one("SELECT filepath FROM media WHERE id=?", (gone,))["filepath"]
+    page = client.get("/sources").text
+    assert 'action="/sources/bulk-delete"' in page and "Delete all sources (4)" in page
+
+    client.post(f"/sources/{ids['A']}/delete")  # files kept by default
+    assert os.path.exists(keep_path) and not db.one("SELECT 1 FROM media WHERE id=?", (keep,))
+    client.post("/sources/bulk-delete", data={"ids": [str(ids["B"]), str(ids["C"])], "files": "1"})
+    assert not os.path.exists(gone_path)
+    assert [r["name"] for r in db.q("SELECT name FROM sources")] == ["D"]
+    client.post("/sources/bulk-delete", data={"scope": "all"})
+    assert not db.q("SELECT 1 FROM sources") and "No sources yet" in client.get("/sources").text

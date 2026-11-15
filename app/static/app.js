@@ -1,6 +1,12 @@
-// Confirm destructive forms
+// Confirm destructive forms. Source deletes also carry the page's "delete downloaded files" choice.
 document.addEventListener('submit', e => {
-  const msg = e.target.dataset.confirm;
+  let msg = e.target.dataset.confirm;
+  const files = e.target.querySelector('[data-files]');
+  if (files) {
+    const on = !!document.querySelector('[data-files-toggle]:checked');
+    files.value = on ? '1' : '';
+    if (msg) msg += on ? ' Their downloaded files on disk are deleted too.' : ' Downloaded files stay on disk.';
+  }
   if (msg && !confirm(msg)) e.preventDefault();
 });
 // Live download progress + refresh while indexing
@@ -54,7 +60,7 @@ document.querySelectorAll('form').forEach(f => {
   c.addEventListener('change', () => sync('container'));
 });
 
-// Select videos for bulk delete
+// Select videos or sources for bulk delete
 (function () {
   const bar = document.getElementById('bulk');
   if (!bar) return;
@@ -67,10 +73,11 @@ document.querySelectorAll('form').forEach(f => {
     bar.querySelector('[data-selected]').textContent = `${n} selected`;
     all.checked = n > 0 && n === boxes().length;
     all.indeterminate = n > 0 && n < boxes().length;
-    bar.dataset.confirm = `Delete ${n} video${n === 1 ? '' : 's'} and their files from disk? ` +
-      "They won't be downloaded again unless you choose Download.";
-    picked.forEach(b => b.closest('.frame').classList.add('picked'));
-    boxes().filter(b => !b.checked).forEach(b => b.closest('.frame').classList.remove('picked'));
+    bar.dataset.confirm = bar.dataset.noun === 'source'
+      ? `Delete ${n} source${n === 1 ? '' : 's'}?`
+      : `Delete ${n} video${n === 1 ? '' : 's'} and their files from disk? ` +
+        "They won't be downloaded again unless you choose Download.";
+    boxes().forEach(b => b.closest('.frame, tr').classList.toggle('picked', b.checked));
   }
   document.addEventListener('change', e => { if (e.target.matches('input[name=ids][form=bulk]')) sync(); });
   all.addEventListener('change', () => { boxes().forEach(b => { b.checked = all.checked; }); sync(); });

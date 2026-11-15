@@ -347,13 +347,42 @@ def refresh_all():
     return back("/media")
 
 
+def remove_sources(ids, files: bool) -> int:
+    """Delete sources (and their video records); with files=True also their downloaded files."""
+    n = 0
+    for sid in ids:
+        if not db.one("SELECT 1 FROM sources WHERE id=?", (sid,)):
+            continue
+        for m in db.q("SELECT * FROM media WHERE source_id=?", (sid,)):
+            if m["status"] == "downloading":
+                ytdl.cancel[m["id"]] = "stopped"
+            if files and m["filepath"]:
+                ytdl.delete_files(m)
+        db.run("DELETE FROM sources WHERE id=?", (sid,))
+        n += 1
+    return n
+
+
+@app.post("/sources/bulk-delete")
+async def sources_bulk_delete(request: Request):
+    """Delete the ticked sources, or (scope=all) every source."""
+    form = await request.form()
+    if form.get("scope") == "all":
+        ids = [r["id"] for r in db.q("SELECT id FROM sources")]
+    else:
+        ids = [int(i) for i in form.getlist("ids") if str(i).isdigit()]
+    files = bool(form.get("files"))
+    if n := remove_sources(ids, files):
+        db.log("info", f"Deleted {n} source(s)" + (" and their downloaded files" if files else ""))
+    return back("/sources")
+
+
 @app.post("/sources/{sid}/delete")
 async def delete_source(request: Request, sid: int):
     form = await request.form()
-    if form.get("files"):
-        for m in db.q("SELECT * FROM media WHERE source_id=? AND filepath IS NOT NULL", (sid,)):
-            ytdl.delete_files(m)
-    db.run("DELETE FROM sources WHERE id=?", (sid,))
+    name = db.one("SELECT name FROM sources WHERE id=?", (sid,))
+    if remove_sources([sid], bool(form.get("files"))) and name:
+        db.log("info", f"Deleted source {name['name']}" + (" and its downloaded files" if form.get("files") else ""))
     return back("/sources")
 
 
