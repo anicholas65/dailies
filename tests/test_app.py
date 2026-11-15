@@ -504,3 +504,23 @@ def test_movie_files_and_cleanup(client, tmp_path):
     ytdl.delete_files({"filepath": str(f)})
     assert not d.exists() and (tmp_path / "Movies").exists()  # movie folder gone, library root kept
     ytdl.delete_files({"filepath": "/etc/passwd"})  # outside every folder: ignored
+
+
+def test_folder_location_dropdown(client):
+    from app import config, folders
+    (config.DOWNLOADS_DIR / "Music" / "YouTube").mkdir(parents=True)
+    (config.DOWNLOADS_DIR / ".hidden").mkdir()
+    locs = folders.locations()[str(config.DOWNLOADS_DIR)]
+    assert locs[:3] == [str(config.DOWNLOADS_DIR), str(config.DOWNLOADS_DIR / "Music"),
+                        str(config.DOWNLOADS_DIR / "Music" / "YouTube")]
+    assert not any(".hidden" in x for x in locs)
+    page = client.get("/settings").text
+    assert f'<option value="{config.DOWNLOADS_DIR / "Music"}"' in page and "Type a path…" in page
+    assert '<option value="/media/Movies" selected>' in page  # current path kept even if not mapped
+    # choose a location + new subfolder
+    client.post("/settings/folders", data={"name": "Kids", "path": str(config.DOWNLOADS_DIR / "Music"),
+                                           "subfolder": "Kids/", "layout": "music"})
+    assert db.one("SELECT path FROM folders WHERE name='Kids'")["path"] == str(config.DOWNLOADS_DIR / "Music" / "Kids")
+    # or type one
+    client.post("/settings/folders", data={"name": "Docs", "path": "__custom", "path_custom": "/srv/docs/", "layout": "shows"})
+    assert db.one("SELECT path FROM folders WHERE name='Docs'")["path"] == "/srv/docs"

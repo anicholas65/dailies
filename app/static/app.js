@@ -77,3 +77,10 @@ document.querySelectorAll('form').forEach(f => {
   bar.querySelector('[data-clear]').addEventListener('click', () => { boxes().forEach(b => { b.checked = false; }); sync(); });
   sync();
 })();
+
+// Download folder location: "Type a path…" reveals a text box
+document.querySelectorAll('[data-path-select]').forEach(sel => {
+  const custom = sel.parentElement.querySelector('[name=path_custom]');
+  const sync = () => { custom.hidden = sel.value !== '__custom'; if (!custom.hidden) custom.focus(); };
+  sel.addEventListener('change', sync);
+});

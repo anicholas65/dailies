@@ -504,12 +504,18 @@ def settings(request: Request, msg: str = ""):
     rows = [dict(f, check=folders.check(f["path"]), sources=used.get(f["id"], 0)) for f in folders.all_folders()]
     return page(request, "settings.html", s=vals, ytdlp=yt_dlp.version.__version__,
                 downloads=config.DOWNLOADS_DIR, folders=rows, layouts=folders.LAYOUTS, msg=msg,
+                locations=folders.locations(),
                 default_folder=db.setting("default_folder"), default_audio_folder=db.setting("default_audio_folder"),
                 log=db.q("SELECT * FROM log ORDER BY id DESC LIMIT 200"))
 
 
 def folder_values(form) -> tuple[dict, str]:
-    vals = {"name": str(form.get("name", "")).strip(), "path": str(form.get("path", "")).strip().rstrip("/") or "/",
+    path = str(form.get("path", ""))
+    if path in ("", "__custom"):
+        path = str(form.get("path_custom", ""))
+    if sub := str(form.get("subfolder", "")).strip().strip("/"):
+        path = path.rstrip("/") + "/" + sub  # "new folder inside the chosen location"
+    vals = {"name": str(form.get("name", "")).strip(), "path": path.strip().rstrip("/") or "/",
             "layout": str(form.get("layout", "shows"))}
     if vals["layout"] not in folders.LAYOUTS:
         vals["layout"] = "shows"

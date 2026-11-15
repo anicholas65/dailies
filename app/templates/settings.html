@@ -1,19 +1,32 @@
 {% extends "base.html" %}
 {% block title %}Settings · Dailies{% endblock %}
+{% macro path_picker(form_id, current='') %}
+{% set known = [] %}{% for v, ps in locations.items() %}{% for x in ps %}{% if known.append(x) %}{% endif %}{% endfor %}{% endfor %}
+<div class="picker">
+  <select name="path" form="{{ form_id }}" data-path-select aria-label="Location">
+    {% if not current %}<option value="" selected disabled>Choose a location</option>{% endif %}
+    {% if current and current not in known %}<option value="{{ current }}" selected>{{ current }}</option>{% endif %}
+    {% for vol, paths in locations.items() %}<optgroup label="Mapped: {{ vol }}">{% for x in paths %}<option value="{{ x }}" {{ 'selected' if x == current }}>{{ x }}</option>{% endfor %}</optgroup>{% endfor %}
+    <option value="__custom">Type a path…</option>
+  </select>
+  <input name="path_custom" form="{{ form_id }}" placeholder="/media/Movies" aria-label="Path" hidden>
+  <input name="subfolder" form="{{ form_id }}" placeholder="New subfolder (optional)" aria-label="New subfolder inside the chosen location">
+</div>
+{% endmacro %}
 {% block body %}
 <h1>Settings</h1>
 <p class="lede">Where downloads are saved, download limits, the schedule and the activity log.</p>
 {% if msg %}<div class="banner">{{ msg }}</div>{% endif %}
 <section class="card" id="folders">
   <h2>Download folders</h2>
-  <p class="muted">Each source saves into one of these. Paths are inside the container: <code>{{ downloads }}</code> is your Downloads mapping; for others, add a Path in the Unraid container settings (for example container <code>/media</code> → host <code>/mnt/user/Data/Media</code>). In Jellyfin, add each folder as a library of the type shown.</p>
+  <p class="muted">Each source saves into one of these. Pick a location from the shares mapped into the container{% if locations %} ({% for v in locations %}<code>{{ v }}</code>{{ ', ' if not loop.last }}{% endfor %}){% endif %}, optionally with a new subfolder. To offer more of your server, add a Path in the Unraid container settings, for example container <code>/media</code> → host <code>/mnt/user/Data/Media</code>. In Jellyfin, add each folder as a library with the same layout.</p>
   <table class="list folders">
     <thead><tr><th>Name</th><th>Path in container</th><th>Jellyfin layout</th><th>Status</th><th></th></tr></thead>
     <tbody>
     {% for f in folders %}
     <tr>
       <td><input name="name" value="{{ f.name }}" form="folder-{{ f.id }}" required aria-label="Name"></td>
-      <td class="title"><input name="path" value="{{ f.path }}" form="folder-{{ f.id }}" required aria-label="Path">
+      <td class="title">{{ path_picker('folder-' ~ f.id, f.path) }}
         <div class="sub {{ 'err' if not f.check[0] }}">{{ f.check[2] or layouts[f.layout][1] }}{% if f.sources %} Used by {{ f.sources }} source{{ '' if f.sources == 1 else 's' }}.{% endif %}</div></td>
       <td><select name="layout" form="folder-{{ f.id }}" aria-label="Layout">{% for k, l in layouts.items() %}<option value="{{ k }}" {{ 'selected' if f.layout == k }}>{{ l[0] }}</option>{% endfor %}</select></td>
       <td class="nowrap"><span class="badge {{ 'downloaded' if f.check[0] else 'failed' }}">{{ f.check[1] }}</span></td>
@@ -25,7 +38,7 @@
     {% endfor %}
     <tr>
       <td><input name="name" form="folder-new" placeholder="New folder" required aria-label="New folder name"></td>
-      <td class="title"><input name="path" form="folder-new" placeholder="/media/Documentaries" required aria-label="New folder path"></td>
+      <td class="title">{{ path_picker('folder-new') }}</td>
       <td><select name="layout" form="folder-new" aria-label="New folder layout">{% for k, l in layouts.items() %}<option value="{{ k }}">{{ l[0] }}</option>{% endfor %}</select></td>
       <td></td>
       <td class="actions"><form id="folder-new" method="post" action="/settings/folders"><button class="sm">Add folder</button></form></td>

@@ -1,5 +1,6 @@
 """Download folders: where each source's files go, and in which Jellyfin layout."""
 import os
+import re
 from pathlib import Path
 
 from . import config, db
@@ -74,6 +75,46 @@ def mount_point(path: Path) -> Path:
 
 
 IN_CONTAINER = Path("/.dockerenv").exists()
+
+SYSTEM_MOUNTS = ("/proc", "/sys", "/dev", "/run", "/snap", "/boot", "/tmp", "/etc", "/usr", "/var", "/lib",
+                 "/opt", "/app", "/home")
+
+
+def volumes() -> list[Path]:
+    """Directories mapped into the container (Unraid Paths), minus /config and system mounts."""
+    found = {config.DOWNLOADS_DIR}
+    try:
+        for line in Path("/proc/self/mountinfo").read_text().splitlines():
+            mp = re.sub(r"\\(\d{3})", lambda m: chr(int(m.group(1), 8)), line.split()[4])
+            if mp == "/" or mp.startswith(SYSTEM_MOUNTS) or Path(mp) == config.CONFIG_DIR:
+                continue
+            found.add(Path(mp))
+    except OSError:
+        pass
+    return sorted(p for p in found if p.is_dir())
+
+
+def _subdirs(p: Path) -> list[Path]:
+    try:
+        return sorted((c for c in p.iterdir() if c.is_dir() and not c.name.startswith((".", "@"))),
+                      key=lambda c: c.name.lower())
+    except OSError:
+        return []
+
+
+def locations() -> dict[str, list[str]]:
+    """Choices for the folder dropdowns: each mapped volume, its folders, and one level deeper where
+    that stays short (so /media/Music/YouTube is offered but not every film in /media/Movies)."""
+    out = {}
+    for vol in volumes():
+        paths = [vol]
+        for child in _subdirs(vol)[:150]:
+            paths.append(child)
+            grand = _subdirs(child)
+            if len(grand) <= 25:
+                paths += grand
+        out[str(vol)] = [str(p) for p in paths]
+    return out
 
 
 def check(path: str) -> tuple[bool, str, str]:
