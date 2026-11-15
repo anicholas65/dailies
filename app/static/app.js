@@ -91,3 +91,10 @@ document.querySelectorAll('[data-path-select]').forEach(sel => {
   const sync = () => { custom.hidden = sel.value !== '__custom'; if (!custom.hidden) custom.focus(); };
   sel.addEventListener('change', sync);
 });
+
+// Copy buttons (extension key)
+document.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', async () => {
+  const text = document.querySelector(b.dataset.copy).textContent.trim();
+  try { await navigator.clipboard.writeText(text); b.textContent = 'Copied'; }
+  catch (_) { getSelection().selectAllChildren(document.querySelector(b.dataset.copy)); b.textContent = 'Press Ctrl+C'; }
+}));

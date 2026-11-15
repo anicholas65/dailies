@@ -12,7 +12,20 @@ Self-hosted YouTube archiver for Unraid, in the spirit of Pinchflat — with **Y
 
 ## Signing in to YouTube
 
-yt-dlp can't log in with a username/password any more — YouTube only accepts browser cookies. Dailies ships a real **Chromium inside the container**, shown in the web UI over noVNC:
+yt-dlp can't log in with a username/password any more — YouTube only accepts browser cookies.
+
+### Chrome extension (recommended)
+
+The `extension/` folder is a Chrome extension that works like Internet Download Manager. It runs in the Chrome you already use, so there's nothing to sign in to on the server:
+
+- It sends Dailies your **youtube.com** cookies (never google.com ones) and resends them whenever Chrome rotates them, plus every 30 minutes.
+- A **Download** button on YouTube video, playlist and channel pages (and a right-click "Download with Dailies") queues the page on Dailies with the format (profile) and folder you pick.
+
+Set up: YouTube page → **Download the extension**, unzip, `chrome://extensions` → Developer mode → **Load unpacked**. In the extension's settings enter the Dailies address and a key from **Create key** (needs `DAILIES_PASSWORD`). Only a hash of the key is stored; **Revoke key** cuts the extension off. Each yt-dlp run uses a private copy of `cookies.txt`, so a run can't overwrite a fresher sign-in the extension just sent.
+
+### Built-in Chromium
+
+Dailies also ships a real **Chromium inside the container**, shown in the web UI over noVNC:
 
 1. **YouTube → Open browser.** Sign in to Google as normal (2FA works). Your password goes only to Google.
 2. **Done — close browser & save.** Chromium shuts down cleanly and its profile stays in `/config/browser`.

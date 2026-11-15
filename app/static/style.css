@@ -170,3 +170,7 @@ input[type=file]{width:auto;max-width:100%}
 .list tr.picked td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
 .source-tools{justify-content:space-between;margin-bottom:10px}.source-tools label{display:flex;gap:8px;align-items:center}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* YouTube page: extension key */
+.keyrow{margin-top:8px}.key{font-size:13px;word-break:break-all;user-select:all;padding:6px 8px;background:var(--surface);border-radius:3px}
+form.inline{display:inline-flex;margin-left:6px;vertical-align:middle}

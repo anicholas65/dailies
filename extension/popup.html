@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dailies</title>
+<style>
+  body { margin: 0; }
+  .foot { font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #5b6669; background: #f7f8f5;
+    padding: 0 14px 12px; width: 280px; box-sizing: border-box; }
+  .foot p { margin: 0 0 8px; }
+  .foot .bad { color: #b3261e; }
+  .foot .row { display: flex; gap: 8px; }
+  .foot button { cursor: pointer; font: inherit; background: transparent; color: #1a2124; border: 1px solid #d3d8d4;
+    border-radius: 4px; padding: 4px 9px; }
+  @media (prefers-color-scheme: dark) {
+    .foot { background: #232a2e; color: #95a19f; } .foot .bad { color: #f07a6a; }
+    .foot button { color: #e7ebe8; border-color: #334045; }
+  }
+</style>
+</head>
+<body>
+<div id="form"></div>
+<div class="foot">
+  <p id="sync"></p>
+  <div class="row"><button id="sync-now">Sync YouTube sign-in now</button><button id="settings">Settings</button></div>
+</div>
+<script src="ui.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

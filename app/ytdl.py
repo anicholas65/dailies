@@ -63,6 +63,25 @@ def safe_name(name: str) -> str:
     return name or "source"
 
 
+def run_cookie_copy() -> str:
+    """A private copy of cookies.txt for one yt-dlp run. yt-dlp writes its cookie jar back to the file
+    when it finishes; on the real file that would overwrite a fresher sign-in the Chrome extension
+    sent meanwhile (or one wiped by a YouTube reply). Copies older than an hour are cleaned up."""
+    import tempfile
+    d = config.CONFIG_DIR / ".run-cookies"
+    d.mkdir(exist_ok=True, mode=0o700)
+    for old in d.glob("*.txt"):
+        try:
+            if time.time() - old.stat().st_mtime > 3600:  # read at the start of a run; a late write-back just recreates it
+                old.unlink()
+        except OSError:
+            pass
+    fd, path = tempfile.mkstemp(suffix=".txt", dir=d)
+    with open(fd, "wb") as f:
+        f.write(config.COOKIES_FILE.read_bytes())
+    return path
+
+
 def base_opts() -> dict:
     opts = {
         "logger": Quiet(),
@@ -78,7 +97,7 @@ def base_opts() -> dict:
     if mode == "browser" and browser.has_profile_cookies():
         opts["cookiesfrombrowser"] = browser.browser_spec()
     elif mode == "file" and config.COOKIES_FILE.exists():
-        opts["cookiefile"] = str(config.COOKIES_FILE)
+        opts["cookiefile"] = run_cookie_copy()
     if proxy := db.setting("proxy"):
         opts["proxy"] = proxy
     if rate := db.setting("rate_limit"):

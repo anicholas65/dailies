@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, browser, config, db, folders, worker, ytdl
+from . import __version__, browser, config, db, ext, folders, worker, ytdl
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
@@ -29,6 +29,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Dailies", lifespan=lifespan, docs_url=None, redoc_url=None)
+app.include_router(ext.router)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 if Path(browser.novnc_dir()).is_dir():
     app.mount("/novnc", StaticFiles(directory=browser.novnc_dir(), html=True), name="novnc")
@@ -67,6 +68,18 @@ SECURITY_HEADERS = {
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
+    if path.startswith(ext.PREFIX):  # Chrome extension: its own key, sent from a chrome-extension:// origin
+        ip = request.client.host if request.client else "?"
+        if login_locked(ip):
+            resp = JSONResponse({"error": "too many wrong keys, try again in 10 minutes"}, status_code=429)
+        elif ext.key_ok(request.headers):
+            resp = await call_next(request)
+        else:
+            import time
+            _failures.setdefault(ip, []).append(time.time())
+            resp = JSONResponse({"error": "wrong or missing extension key"}, status_code=401)
+        resp.headers.update(SECURITY_HEADERS)
+        return resp
     if request.method not in ("GET", "HEAD", "OPTIONS") and not same_origin(request.headers):
         db.log("warn", f"Blocked a {request.method} to {path} from another website ({request.headers.get('origin')})")
         resp = JSONResponse({"error": "cross-site request blocked"}, status_code=403)
@@ -492,13 +505,31 @@ def delete_profile(pid: int):
 # ---- YouTube sign-in -----------------------------------------------------------
 
 @app.get("/youtube", response_class=HTMLResponse)
-def youtube(request: Request, msg: str = "", ok: str = ""):
+def youtube(request: Request, msg: str = "", ok: str = "", new_key: str = ""):
     return page(request, "youtube.html", msg=msg, ok=ok, has_file=config.COOKIES_FILE.exists(),
-                diag=browser.diagnostics())
+                diag=browser.diagnostics(), new_key=new_key, ext_key=ext.has_key(),
+                ext_created=db.setting("ext_key_created"), ext_synced=db.setting("ext_synced_at"),
+                server=str(request.base_url).rstrip("/"))
 
 
 NEEDS_PASSWORD = ("Set a web UI password first (Unraid: edit the Dailies container, Web UI password). "
                   "Without one, anyone on your network could use your signed-in Google account.")
+
+
+@app.post("/youtube/extension/key", response_class=HTMLResponse)
+def extension_key(request: Request):
+    if not config.PASSWORD:
+        return yt(NEEDS_PASSWORD, False)
+    key = ext.new_key()  # shown once on this response, never put in a URL
+    db.log("info", "New Chrome extension key created (any older key stops working)")
+    return youtube(request, new_key=key)
+
+
+@app.post("/youtube/extension/revoke")
+def extension_revoke():
+    ext.revoke()
+    db.log("info", "Chrome extension key revoked")
+    return yt("Extension key revoked. The extension can't reach Dailies until you create a new key.", True)
 
 
 @app.post("/youtube/browser/start")

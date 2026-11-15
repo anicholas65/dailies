@@ -60,7 +60,8 @@ def test_auth_opts(client):
     assert "cookiefile" not in ytdl.base_opts() and "cookiesfrombrowser" not in ytdl.base_opts()
     config.COOKIES_FILE.write_text("x")
     db.set_setting("auth_mode", "file")
-    assert ytdl.base_opts()["cookiefile"] == str(config.COOKIES_FILE)
+    run = ytdl.base_opts()["cookiefile"]
+    assert run != str(config.COOKIES_FILE) and open(run).read() == "x"  # yt-dlp gets a private copy
     db.set_setting("auth_mode", "browser")
     (config.BROWSER_PROFILE / "Default").mkdir(parents=True)
     (config.BROWSER_PROFILE / "Default" / "Cookies").write_bytes(b"")
@@ -196,7 +197,7 @@ def test_vnc_iframe_uses_absolute_ws_path(client, monkeypatch):
     monkeypatch.setattr(browser, "running", lambda: True)
     html = client.get("/youtube").text
     assert "path=/vnc/ws" in html
-    assert any(r.path == "/vnc/ws" for r in client.app.routes)
+    assert any(getattr(r, "path", None) == "/vnc/ws" for r in client.app.routes)
 
 
 def _fmt(fid, h, vcodec, ext="mp4"):
@@ -729,3 +730,82 @@ def test_profile_signed_in_survives_unreadable_cookies(client, monkeypatch):
     monkeypatch.setattr(browser, "has_profile_cookies", lambda: True)
     monkeypatch.setattr(browser, "load_browser_cookies", lambda: 1 / 0)
     assert browser.profile_signed_in() is False
+
+
+def _ext_key(client, monkeypatch):
+    _login(client, monkeypatch)
+    page = client.post("/youtube/extension/key").text
+    import re
+    return re.search(r"dly_[\w-]+", page).group(0)
+
+
+EXT_COOKIES = [
+    {"domain": ".youtube.com", "name": "LOGIN_INFO", "value": "abc", "path": "/", "secure": True, "httpOnly": True,
+     "hostOnly": False, "expirationDate": 2000000000},
+    {"domain": ".youtube.com", "name": "SAPISID", "value": "def", "path": "/", "secure": True, "httpOnly": False,
+     "hostOnly": False, "expirationDate": 2000000000.5},
+    {"domain": "www.youtube.com", "name": "PREF", "value": "f6=8\tbad", "path": "/", "hostOnly": True},
+    {"domain": ".google.com", "name": "SID", "value": "nope", "path": "/"},
+    {"domain": "evil-youtube.com", "name": "X", "value": "nope", "path": "/"},
+]
+
+
+def test_extension_key_and_auth(client, monkeypatch):
+    assert client.get("/api/ext/info").status_code == 401
+    key = _ext_key(client, monkeypatch)
+    h = {"Authorization": f"Bearer {key}", "Origin": "chrome-extension://abcdef"}
+    info = client.get("/api/ext/info", headers=h).json()
+    assert info["profiles"] and info["folders"] and info["youtube"]["signed_in"] is False
+    assert client.get("/api/ext/info", headers={"Authorization": "Bearer dly_wrong"}).status_code == 401
+    assert key not in db.one("SELECT value FROM settings WHERE key='ext_key_hash'")["value"]  # only the hash is kept
+    client.post("/youtube/extension/revoke")
+    assert client.get("/api/ext/info", headers=h).status_code == 401
+
+
+def test_extension_cookie_sync(client, monkeypatch):
+    h = {"Authorization": f"Bearer {_ext_key(client, monkeypatch)}", "Origin": "chrome-extension://abcdef"}
+    r = client.post("/api/ext/cookies", json={"cookies": EXT_COOKIES[2:]}, headers=h).json()
+    assert r["ok"] is False and not config.COOKIES_FILE.exists()  # logged-out set doesn't replace anything
+    r = client.post("/api/ext/cookies", json={"cookies": EXT_COOKIES}, headers=h).json()
+    assert r["ok"] and r["count"] == 3 and r["signed_in"]
+    text = config.COOKIES_FILE.read_text()
+    assert "google.com" not in text and "evil" not in text and "f6=8 bad" in text
+    assert "#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t2000000000\tLOGIN_INFO\tabc" in text
+    assert "www.youtube.com\tFALSE\t/" in text
+    assert db.setting("auth_mode") == "file" and browser.status()["signed_in"]
+
+
+def test_extension_download(client, monkeypatch):
+    h = {"Authorization": f"Bearer {_ext_key(client, monkeypatch)}", "Origin": "chrome-extension://abcdef"}
+    mp3 = db.one("SELECT id FROM profiles WHERE container='mp3'")["id"]
+    movies = db.one("SELECT id FROM folders WHERE name='Movies'")["id"]
+    r = client.post("/api/ext/download", headers=h, json={
+        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDx&t=42", "title": "Song", "profile_id": mp3,
+        "folder_id": movies}).json()
+    assert r["ok"] and r["message"].startswith("Queued: Song")
+    s = db.one("SELECT * FROM sources")
+    assert (s["url"], s["kind"], s["profile_id"], s["folder_id"], s["name"]) == (
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "video", mp3, movies, "Song")
+    db.run("INSERT INTO media(source_id, video_id, title, url, status) VALUES (?, 'dQw4w9WgXcQ', 'Song', 'u', 'downloaded')",
+           (s["id"],))
+    again = client.post("/api/ext/download", headers=h, json={
+        "url": "https://youtu.be/dQw4w9WgXcQ", "profile_id": mp3, "folder_id": movies}).json()
+    assert again["message"].startswith("Already downloaded")
+    other = client.post("/api/ext/download", headers=h, json={"url": "https://youtu.be/dQw4w9WgXcQ"}).json()
+    assert other["ok"] and db.one("SELECT COUNT(*) n FROM sources")["n"] == 2  # another format = new download
+    bad = client.post("/api/ext/download", headers=h, json={"url": "https://example.com/watch?v=x"})
+    assert bad.status_code == 400
+
+
+def test_extension_zip(client, monkeypatch):
+    import io
+    import json
+    import zipfile
+    _login(client, monkeypatch)
+    z = zipfile.ZipFile(io.BytesIO(client.get("/extension/dailies-extension.zip").content))
+    names = z.namelist()
+    assert "dailies-extension/manifest.json" in names and "dailies-extension/background.js" in names
+    manifest = json.loads(z.read("dailies-extension/manifest.json"))
+    for f in [manifest["background"]["service_worker"], manifest["options_page"], manifest["action"]["default_popup"],
+              *manifest["content_scripts"][0]["js"], *manifest["icons"].values()]:
+        assert "dailies-extension/" + f in names

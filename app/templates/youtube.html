@@ -13,7 +13,7 @@
   <p>{{ auth.detail }}{% if auth.signed_in and auth.expires %} Login cookie expires {{ auth.expires }}.{% endif %}</p>
   <form method="post" action="/youtube/mode" class="row modes">
     <span class="muted">yt-dlp uses:</span>
-    {% for m, label in [('browser','Built-in Chromium'),('file','cookies.txt'),('none','No account')] %}
+    {% for m, label in [('file','Chrome extension / cookies.txt'),('browser','Built-in Chromium'),('none','No account')] %}
     <label class="pill"><input type="radio" name="mode" value="{{ m }}" {{ 'checked' if auth.mode == m }} onchange="this.form.submit()"> {{ label }}</label>
     {% endfor %}
   </form>
@@ -24,8 +24,28 @@
   </div>
 </section>
 
+<section class="card" id="extension">
+  <div class="head"><h2>Use your own Chrome</h2>
+    <span class="badge {{ 'downloaded' if ext_synced and auth.mode == 'file' else ('queued' if ext_key else 'pending') }}">{{ 'connected' if ext_synced and auth.mode == 'file' else ('key created' if ext_key else 'recommended') }}</span></div>
+  <p>The Dailies extension works like Internet Download Manager: it runs in the Chrome you already use, so there's nothing to sign in to here. It keeps Dailies signed in with your Chrome's YouTube session, and adds a <b>Download</b> button on YouTube that queues the video on {{ server }} in the format and folder you pick.</p>
+  {% if new_key %}
+  <div class="banner ok"><b>Your extension key</b> (shown once, copy it now):
+    <div class="row keyrow"><code class="key" id="ext-key">{{ new_key }}</code><button type="button" class="sm" data-copy="#ext-key">Copy</button></div></div>
+  {% endif %}
+  <ol class="steps">
+    <li><a class="button sm" href="/extension/dailies-extension.zip">Download the extension</a> and unzip it.</li>
+    <li>In Chrome open <code>chrome://extensions</code>, turn on <b>Developer mode</b> (top right), click <b>Load unpacked</b> and pick the <code>dailies-extension</code> folder.</li>
+    <li>In the extension's settings, enter this server, <code>{{ server }}</code>, and a key:
+      {% if no_password %}<span class="err">set a web UI password first.</span>
+      {% else %}<form method="post" action="/youtube/extension/key" class="inline" {% if ext_key %}data-confirm="Create a new key? The old one stops working."{% endif %}><button class="sm {{ 'ghost' if ext_key }}">{{ 'Create a new key' if ext_key else 'Create key' }}</button></form>{% endif %}</li>
+    <li>Make sure Chrome is signed in on youtube.com. The extension sends Dailies your YouTube cookies (never your Google account's) and refreshes them whenever Chrome does.</li>
+  </ol>
+  {% if ext_key %}<p class="muted">Key created {{ ext_created }}.{% if ext_synced %} Last cookie sync {{ ext_synced }}.{% endif %}
+    <form method="post" action="/youtube/extension/revoke" class="inline" data-confirm="Revoke the extension key? The extension stops working until you create a new one."><button class="sm ghost">Revoke key</button></form></p>{% endif %}
+</section>
+
 <section class="card">
-  <div class="head"><h2>Sign in with Chromium</h2>
+  <div class="head"><h2>Or sign in with the built-in Chromium</h2>
     {% if auth.running %}
     <form method="post" action="/youtube/browser/stop"><button>Done — close browser &amp; save</button></form>
     {% else %}
