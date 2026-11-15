@@ -51,7 +51,7 @@ def test_profile_opts(client):
     assert o["merge_output_format"] == "mp4"
     assert "My_Chan/" in o["outtmpl"]["default"]
     a = ytdl.profile_opts(db.one("SELECT * FROM profiles WHERE quality='audio'"), s)
-    assert a["postprocessors"][0] == {"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}
+    assert a["postprocessors"][0] == {"key": "FFmpegExtractAudio", "preferredcodec": "m4a", "preferredquality": "0"}
 
 
 def test_auth_opts(client):
@@ -218,3 +218,61 @@ def test_quality_is_honoured_with_prefer_h264(client, quality, want):
     r = yt_dlp.YoutubeDL(opts).process_ie_result(info, download=False)
     assert r["format_id"] == f"{want}+140"
     assert ytdl.resolution_note(r, p).startswith(f"{quality}p")
+
+
+def test_presets_and_audio_formats(client):
+    from app import db, ytdl
+    names = {r["name"]: r for r in db.q("SELECT * FROM profiles")}
+    for n in ("720p MP4", "1080p MP4", "2160p (4K) MP4", "Audio (MP3)", "Audio (WAV)"):
+        assert n in names
+    s = {"name": "S"}
+    mp3 = ytdl.profile_opts(names["Audio (MP3)"], s)
+    assert mp3["postprocessors"][0] == {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "0"}
+    assert any(pp["key"] == "EmbedThumbnail" for pp in mp3["postprocessors"])
+    wav = ytdl.profile_opts(names["Audio (WAV)"], s)
+    keys = [pp["key"] for pp in wav["postprocessors"]]
+    assert wav["postprocessors"][0]["preferredcodec"] == "wav"
+    assert "EmbedThumbnail" not in keys
+    assert all(not pp.get("add_chapters") for pp in wav["postprocessors"])
+    assert "height<=2160" in ytdl.profile_opts(names["2160p (4K) MP4"], s)["format"]
+    assert "height<=720" in ytdl.profile_opts(names["720p MP4"], s)["format"]
+
+
+def test_presets_added_once_to_existing_install(client):
+    from app import db
+    db.run("DELETE FROM profiles WHERE name='Audio (WAV)'")
+    db.reset()
+    db.init()
+    assert not db.one("SELECT 1 FROM profiles WHERE name='Audio (WAV)'")
+
+
+def test_profile_save_normalises_format(client):
+    from app import db
+    client.post("/profiles", data={"name": "A", "quality": "audio", "container": "mp4"})
+    client.post("/profiles", data={"name": "V", "quality": "720", "container": "wav"})
+    assert db.one("SELECT container FROM profiles WHERE name='A'")["container"] == "mp3"
+    assert db.one("SELECT container FROM profiles WHERE name='V'")["container"] == "mp4"
+    page = client.get("/profiles").text
+    assert 'value="wav"' in page and "2160p (4K)" in page
+
+
+def test_youtube_title():
+    assert ytdl.youtube_title("channel", {"channel": "Cody", "title": "Cody - Videos"}) == "Cody"
+    assert ytdl.youtube_title("channel", {"title": "Cody - Videos"}) == "Cody"
+    assert ytdl.youtube_title("playlist", {"title": "My &amp; List"}) == "My & List"
+    assert ytdl.youtube_title("video", {}) is None
+
+
+def test_blank_name_is_auto_named_on_index(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(ytdl.yt_dlp.YoutubeDL, "extract_info",
+                        lambda self, url, download=False: calls.append(url) or
+                        {"title": "How I Vibe Coded a Recipe App", "id": "9atd5lczG2k"})
+    client.post("/sources", data={"url": "https://www.youtube.com/watch?v=9atd5lczG2k"})
+    client.post("/sources", data={"url": "https://www.youtube.com/watch?v=abcdefghijk", "name": "Mine"})
+    a, b = db.q("SELECT * FROM sources ORDER BY id")
+    assert a["auto_name"] == 1 and b["auto_name"] == 0
+    ytdl.index_source(a["id"])
+    ytdl.index_source(b["id"])
+    names = [r["name"] for r in db.q("SELECT name FROM sources ORDER BY id")]
+    assert names == ["How I Vibe Coded a Recipe App", "Mine"]

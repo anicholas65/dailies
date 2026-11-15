@@ -4,8 +4,13 @@
 <form method="post" action="/profiles" class="grid">
   {% if p %}<input type="hidden" name="id" value="{{ p.id }}">{% endif %}
   <label>Name <input name="name" value="{{ p.name if p }}" required></label>
-  <label>Quality <select name="quality">{% for qn in qualities %}<option value="{{ qn }}" {{ 'selected' if p and p.quality == qn }}>{{ {'best':'Best available','audio':'Audio only'}.get(qn, qn ~ 'p max') }}</option>{% endfor %}</select></label>
-  <label>Container <select name="container">{% for c in ['mp4','mkv','webm','m4a','mp3','opus'] %}<option {{ 'selected' if p and p.container == c }}>{{ c }}</option>{% endfor %}</select></label>
+  {% set qlabels = {'best':'Best available','2160':'2160p (4K)','audio':'Audio only'} %}
+  <label>Quality <select name="quality" data-quality>{% for qn in qualities %}<option value="{{ qn }}" {{ 'selected' if (p.quality if p else '1080') == qn }}>{{ qlabels.get(qn, qn ~ 'p') }}</option>{% endfor %}</select>
+    <small>Highest available up to this; never upscaled.</small></label>
+  <label>Format <select name="container" data-container>
+    <optgroup label="Video">{% for c in video_containers %}<option value="{{ c }}" {{ 'selected' if p and p.container == c }}>{{ c|upper }}</option>{% endfor %}</optgroup>
+    <optgroup label="Audio only">{% for c in audio_codecs %}<option value="{{ c }}" {{ 'selected' if p and p.container == c }}>{{ c|upper }}{{ ' (lossless, large)' if c == 'wav' }}</option>{% endfor %}</optgroup>
+  </select></label>
   <label class="wide">Output template <input name="output" value="{{ p.output if p else '{source}/%(upload_date>%Y-%m-%d)s - %(title)s [%(id)s].%(ext)s' }}">
     <small>Relative to /downloads. <code>{source}</code> = source name; other fields are <a href="https://github.com/yt-dlp/yt-dlp#output-template" target="_blank" rel="noopener">yt-dlp output fields</a>.</small></label>
   <label>Subtitle languages <input name="subtitles" value="{{ p.subtitles if p }}" placeholder="en,es — blank = none"></label>

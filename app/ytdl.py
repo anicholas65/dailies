@@ -18,7 +18,8 @@ QUALITY_FORMATS = {
     "480": "bv*[height<=480]+ba/b[height<=480]",
     "audio": "ba/b",
 }
-AUDIO_CODECS = {"m4a", "mp3", "opus"}
+VIDEO_CONTAINERS = ("mp4", "mkv", "webm")
+AUDIO_CODECS = ("mp3", "wav", "m4a", "opus")
 FEEDS = {  # need a signed-in account
     "watchlater": ("Watch Later", "https://www.youtube.com/playlist?list=WL"),
     "liked": ("Liked videos", "https://www.youtube.com/playlist?list=LL"),
@@ -107,10 +108,11 @@ def profile_opts(profile, source) -> dict:
     }
     pps = opts["postprocessors"]
     if audio:
-        codec = profile["container"] if profile["container"] in AUDIO_CODECS else "m4a"
-        pps.append({"key": "FFmpegExtractAudio", "preferredcodec": codec})
+        codec = profile["container"] if profile["container"] in AUDIO_CODECS else "mp3"
+        # "0" = best VBR for mp3 (V0); ignored by lossless wav
+        pps.append({"key": "FFmpegExtractAudio", "preferredcodec": codec, "preferredquality": "0"})
     else:
-        opts["merge_output_format"] = profile["container"] if profile["container"] in ("mp4", "mkv", "webm") else "mkv"
+        opts["merge_output_format"] = profile["container"] if profile["container"] in VIDEO_CONTAINERS else "mp4"
         if profile["prefer_h264"]:
             # resolution first: H.264 only wins between formats of the same height
             # (YouTube's H.264 tops out at 1080p, often lower)
@@ -124,12 +126,14 @@ def profile_opts(profile, source) -> dict:
         cats = [c.strip() for c in profile["sponsorblock"].split(",") if c.strip()]
         pps.append({"key": "SponsorBlock", "categories": cats, "when": "after_filter"})
         pps.append({"key": "ModifyChapters", "remove_sponsor_segments": cats})
-    if profile["embed_metadata"] or profile["embed_chapters"]:
+    wav = audio and profile["container"] == "wav"  # WAV holds basic tags only: no chapters or cover art
+    chapters = bool(profile["embed_chapters"]) and not wav
+    if profile["embed_metadata"] or chapters:
         pps.append({"key": "FFmpegMetadata", "add_metadata": bool(profile["embed_metadata"]),
-                    "add_chapters": bool(profile["embed_chapters"])})
+                    "add_chapters": chapters})
     if opts["writethumbnail"]:
         pps.append({"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"})
-        if profile["embed_thumbnail"] and (audio or opts.get("merge_output_format") != "webm"):
+        if profile["embed_thumbnail"] and not wav and (audio or opts.get("merge_output_format") != "webm"):
             pps.append({"key": "EmbedThumbnail", "already_have_thumbnail": bool(profile["write_thumbnail"])})
     return opts
 
@@ -169,6 +173,17 @@ def _flat_entries(info):
             yield e
 
 
+def youtube_title(kind: str, info) -> str | None:
+    """Channel name for channels, else the playlist/video title."""
+    if kind == "channel":
+        title = info.get("channel") or info.get("uploader")
+        if not title:  # tab pages are titled "Name - Videos"
+            title = re.sub(r"\s+-\s+(Videos|Shorts|Live|Streams)$", "", info.get("title") or "")
+    else:
+        title = info.get("title")
+    return (html.unescape(title).strip() or None) if title else None
+
+
 def index_source(source_id: int) -> int:
     """Fetch the source's video list and add new items. Returns count of new items."""
     source = db.one("SELECT * FROM sources WHERE id=?", (source_id,))
@@ -182,6 +197,9 @@ def index_source(source_id: int) -> int:
         with yt_dlp.YoutubeDL(opts) as ydl:
             for url in source_urls(source):
                 info = ydl.extract_info(url, download=False)
+                if source["auto_name"] and (title := youtube_title(source["kind"], info)):
+                    db.run("UPDATE sources SET name=?, auto_name=0 WHERE id=?", (title, source_id))
+                    source = db.one("SELECT * FROM sources WHERE id=?", (source_id,))
                 entries = list(_flat_entries(info)) if info.get("entries") is not None else [info]
                 for e in entries:
                     vid = e.get("id")

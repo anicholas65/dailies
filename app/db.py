@@ -135,19 +135,39 @@ def run(sql, args=()) -> int:
         return conn.execute(sql, args).lastrowid
 
 
+PRESETS_V2 = [  # name, quality, container, write_nfo
+    ("720p MP4", "720", "mp4", 1),
+    ("2160p (4K) MP4", "2160", "mp4", 1),
+    ("Audio (MP3)", "audio", "mp3", 0),
+    ("Audio (WAV)", "audio", "wav", 0),
+]
+
+
 def init():
     config.ensure_dirs()
     with tx() as conn:
         conn.executescript(SCHEMA)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(sources)")}
+        if "auto_name" not in cols:  # 0.1.5: name the source from YouTube on first index
+            conn.execute("ALTER TABLE sources ADD COLUMN auto_name INTEGER NOT NULL DEFAULT 0")
         for k, v in DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (k, v))
-        if not conn.execute("SELECT 1 FROM profiles").fetchone():
+        fresh = not conn.execute("SELECT 1 FROM profiles").fetchone()
+        if fresh:
             conn.execute("INSERT INTO profiles(name, quality, container) VALUES ('1080p MP4', '1080', 'mp4')")
             conn.execute("INSERT INTO profiles(name, quality, container) VALUES ('Best (MKV)', 'best', 'mkv')")
             conn.execute(
                 "INSERT INTO profiles(name, quality, container, embed_chapters, write_nfo) "
                 "VALUES ('Audio (M4A)', 'audio', 'm4a', 1, 0)"
             )
+        # presets added in 0.1.5 - once, so deleting one later sticks
+        if not conn.execute("SELECT 1 FROM settings WHERE key='presets_v2'").fetchone():
+            have = {r[0] for r in conn.execute("SELECT name FROM profiles")}
+            for name, quality, container, nfo in PRESETS_V2:
+                if name not in have:
+                    conn.execute("INSERT INTO profiles(name, quality, container, write_nfo) VALUES (?, ?, ?, ?)",
+                                 (name, quality, container, nfo))
+            conn.execute("INSERT INTO settings(key, value) VALUES ('presets_v2', '1')")
         # downloads interrupted by a restart go back to the queue
         conn.execute("UPDATE media SET status='queued' WHERE status='downloading'")
 

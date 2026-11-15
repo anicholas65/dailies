@@ -35,3 +35,21 @@ document.addEventListener('submit', e => {
   tick();
   setInterval(tick, 2000);
 })();
+
+// Profile form: "Audio only" quality <-> audio format
+document.querySelectorAll('form').forEach(f => {
+  const q = f.querySelector('[data-quality]'), c = f.querySelector('[data-container]');
+  if (!q || !c) return;
+  const groups = c.querySelectorAll('optgroup');
+  function sync(from) {
+    const audio = from === 'container' ? c.selectedOptions[0].parentElement === groups[1] : q.value === 'audio';
+    if (from === 'container') {
+      if (audio) q.value = 'audio';
+      else if (q.value === 'audio') q.value = '1080';
+    } else if ((c.selectedOptions[0].parentElement === groups[1]) !== audio) {
+      c.value = audio ? 'mp3' : 'mp4';
+    }
+  }
+  q.addEventListener('change', () => sync('quality'));
+  c.addEventListener('change', () => sync('container'));
+});

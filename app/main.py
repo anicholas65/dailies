@@ -173,7 +173,9 @@ async def add_source(request: Request):
     if not url:
         return back("/sources")
     vals["kind"] = vals.get("kind") or ytdl.detect_kind(url)
-    vals["name"] = vals.get("name") or url.rstrip("/").rsplit("/", 1)[-1].lstrip("@") or "Source"
+    if not vals.get("name"):  # placeholder until the first index fetches the real title
+        vals["name"] = url.rstrip("/").rsplit("/", 1)[-1].lstrip("@") or "Source"
+        vals["auto_name"] = 1
     vals.setdefault("profile_id", db.one("SELECT id FROM profiles ORDER BY id")["id"])
     cols = ", ".join(vals)
     sid = db.run(f"INSERT INTO sources({cols}) VALUES ({', '.join('?' * len(vals))})", tuple(vals.values()))
@@ -285,7 +287,8 @@ def queue_control(action: str):
 def profiles(request: Request):
     used = {r["profile_id"]: r["n"] for r in db.q("SELECT profile_id, COUNT(*) n FROM sources GROUP BY profile_id")}
     return page(request, "profiles.html", profiles=db.q("SELECT * FROM profiles ORDER BY id"), used=used,
-                qualities=list(ytdl.QUALITY_FORMATS))
+                qualities=list(ytdl.QUALITY_FORMATS), video_containers=ytdl.VIDEO_CONTAINERS,
+                audio_codecs=ytdl.AUDIO_CODECS)
 
 
 @app.post("/profiles")
@@ -295,6 +298,12 @@ async def save_profile(request: Request):
     pid = form.get("id")
     if not vals.get("output"):
         vals.pop("output", None)
+    if vals.get("quality") not in ytdl.QUALITY_FORMATS:
+        vals["quality"] = "1080"
+    if vals["quality"] == "audio" and vals.get("container") not in ytdl.AUDIO_CODECS:
+        vals["container"] = "mp3"
+    elif vals["quality"] != "audio" and vals.get("container") not in ytdl.VIDEO_CONTAINERS:
+        vals["container"] = "mp4"
     if pid:
         db.run(f"UPDATE profiles SET {', '.join(f'{k}=?' for k in vals)} WHERE id=?", (*vals.values(), int(pid)))
     else:
