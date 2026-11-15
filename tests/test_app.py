@@ -199,6 +199,8 @@ FAKE_FORMATS = [
     _fmt("136", 720, "avc1.4d401f"), _fmt("137", 1080, "avc1.640028"),
     _fmt("248", 1080, "vp09.00.40.08", "webm"), _fmt("271", 1440, "vp09.00.50.08", "webm"),
     _fmt("313", 2160, "vp09.00.51.08", "webm"),
+    # legacy 360p muxed stream - old sort ranked its AAC audio above resolution
+    _fmt("18", 360, "avc1.42001E") | {"acodec": "mp4a.40.2"},
     {"format_id": "140", "url": "http://x/140", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2",
      "abr": 128, "protocol": "https"},
 ]
