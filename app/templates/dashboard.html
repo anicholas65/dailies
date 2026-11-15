@@ -17,8 +17,9 @@
 <section class="block">
   <div class="head"><h2>Queue</h2>
     <div class="row">
-      {% if paused %}<span class="badge failed">paused</span>{% if pause_reason %}<span class="err">{{ pause_reason }} <a href="/youtube">Sign in to YouTube</a></span>{% endif %}<form method="post" action="/queue/resume"><button class="sm">Resume queue</button></form>
-      {% else %}<form method="post" action="/queue/pause"><button class="sm ghost">Pause queue</button></form>{% endif %}
+      {% if stopped %}<form method="post" action="/queue/resume-stopped"><button class="sm ghost">Resume {{ stopped }} stopped</button></form>{% endif %}
+      {% if paused %}<span class="badge stopped">stopped</span>{% if pause_reason %}<span class="err">{{ pause_reason }} <a href="/youtube">Sign in to YouTube</a></span>{% endif %}<form method="post" action="/queue/start"><button class="sm">Start downloads</button></form>
+      {% else %}<form method="post" action="/queue/stop"><button class="sm ghost">Stop downloads</button></form>{% endif %}
     </div>
   </div>
   {% if refreshing %}<p class="muted">Renaming &amp; refreshing {{ refreshing }} file(s) after downloads finish.</p>{% endif %}

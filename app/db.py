@@ -160,6 +160,8 @@ def init():
             conn.execute("ALTER TABLE media ADD COLUMN channel TEXT")
         if "refresh" not in mcols:  # 0.1.7: queued rename + metadata refresh of an existing file
             conn.execute("ALTER TABLE media ADD COLUMN refresh INTEGER NOT NULL DEFAULT 0")
+        if "priority" not in mcols:  # 0.1.15: Start now / Resume put a video at the front of the queue
+            conn.execute("ALTER TABLE media ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
         cols = {r[1] for r in conn.execute("PRAGMA table_info(sources)")}
         if "folder_id" not in cols:  # 0.1.12: per-source download folder (NULL = default for profile)
             conn.execute("ALTER TABLE sources ADD COLUMN folder_id INTEGER")

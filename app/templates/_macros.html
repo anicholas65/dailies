@@ -19,13 +19,17 @@
     {% if m.status != 'downloaded' %}{{ badge(m.status) }}{% endif %}
   </div>
   {% if m.error and m.status in ('failed','skipped') %}<p class="err" title="{{ m.error }}">{{ m.error }}</p>{% endif %}
-  {% if m.status != 'downloading' %}
   <div class="actions">
+    {% if m.status == 'downloading' %}<form method="post" action="/media/{{ m.id }}/stop"><button class="sm">Stop</button></form>
+    {% else %}
+    {% if m.status == 'queued' %}<form method="post" action="/media/{{ m.id }}/start"><button class="sm">Start now</button></form><form method="post" action="/media/{{ m.id }}/stop"><button class="sm ghost">Stop</button></form>{% endif %}
+    {% if m.status == 'stopped' %}<form method="post" action="/media/{{ m.id }}/resume"><button class="sm">Resume</button></form>{% endif %}
     {% if m.status in ('pending','skipped','deleted') %}<form method="post" action="/media/{{ m.id }}/queue"><button class="sm">Download</button></form>{% endif %}
     {% if m.status == 'failed' %}<form method="post" action="/media/{{ m.id }}/retry"><button class="sm">Retry</button></form>{% endif %}
-    {% if m.status in ('pending','queued','failed') %}<form method="post" action="/media/{{ m.id }}/skip"><button class="sm ghost">Skip</button></form>{% endif %}
+    {% if m.status in ('pending','queued','failed','stopped') %}<form method="post" action="/media/{{ m.id }}/skip"><button class="sm ghost">Skip</button></form>{% endif %}
     {% if m.status != 'deleted' %}<form method="post" action="/media/{{ m.id }}/delete" data-confirm="{{ 'Delete this video and its files from disk?' if m.filepath else 'Delete this video?' }} It won't be downloaded again unless you choose Download."><button class="sm ghost">Delete</button></form>{% endif %}
-  </div>{% endif %}
+    {% endif %}
+  </div>
 </article>
 {% endmacro %}
 

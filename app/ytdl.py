@@ -267,6 +267,9 @@ def skip_reason(source, info) -> str | None:
     return None
 
 
+cancel: dict[int, str] = {}  # media id -> status to leave it in ("stopped" | "queued") when cancelled
+
+
 def download(media_id: int) -> str:
     item = db.one("SELECT * FROM media WHERE id=?", (media_id,))
     source = db.one("SELECT * FROM sources WHERE id=?", (item["source_id"],))
@@ -274,7 +277,12 @@ def download(media_id: int) -> str:
     db.run("UPDATE media SET status='downloading', attempts=attempts+1, error=NULL WHERE id=?", (media_id,))
     progress[media_id] = {"title": item["title"], "percent": 0, "speed": "", "eta": ""}
 
+    def check_cancel(_d=None):
+        if media_id in cancel:
+            raise yt_dlp.utils.DownloadCancelled("Stopped")
+
     def hook(d):
+        check_cancel()
         p = progress.setdefault(media_id, {"title": item["title"]})
         if d["status"] == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
@@ -285,7 +293,7 @@ def download(media_id: int) -> str:
             p["percent"] = 100
 
     dest = folders.for_source(source, profile)
-    opts = base_opts() | profile_opts(profile, source) | {"progress_hooks": [hook]}
+    opts = base_opts() | profile_opts(profile, source) | {"progress_hooks": [hook], "postprocessor_hooks": [check_cancel]}
     try:
         usable, _, why = folders.check(dest["path"])
         if not usable:
@@ -297,18 +305,25 @@ def download(media_id: int) -> str:
                        (reason, info.get("title") or item["title"], info.get("upload_date"), media_id))
                 return "skipped"
             info.update(episode_fields(media_id, source, info, by_channel(profile, dest["layout"])))
+            check_cancel()
             info = ydl.process_ie_result(info, download=True)
             path = final_path(info)
             if path:
                 write_sidecars(Path(path), info, source, profile, dest["layout"], ydl)
         size = Path(path).stat().st_size if path and Path(path).exists() else None
-        db.run("UPDATE media SET status='downloaded', filepath=?, filesize=?, title=?, upload_date=?, duration=?, "
+        db.run("UPDATE media SET status='downloaded', priority=0, filepath=?, filesize=?, title=?, upload_date=?, duration=?, "
                "downloaded=datetime('now') WHERE id=?",
                (path, size, info.get("title") or item["title"], info.get("upload_date"),
                 int(info["duration"]) if info.get("duration") else None, media_id))
         db.log("info", f"Downloaded {info.get('title')} ({resolution_note(info, profile)})")
         return "downloaded"
     except Exception as exc:
+        if mode := cancel.get(media_id):
+            # partial .part files stay, so Resume continues where it stopped
+            db.run("UPDATE media SET status=?, error=NULL, priority=? WHERE id=?",
+                   (mode, 1 if mode == "queued" else 0, media_id))
+            db.log("info", f"Stopped {item['title']}")
+            return "stopped"
         msg = clean_error(exc)
         login = needs_login(msg)
         if login:
@@ -318,6 +333,7 @@ def download(media_id: int) -> str:
         return "login" if login and "Sign in to confirm" in msg else "failed"
     finally:
         progress.pop(media_id, None)
+        cancel.pop(media_id, None)
 
 
 def resolution_note(info, profile) -> str:

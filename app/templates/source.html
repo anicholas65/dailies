@@ -5,7 +5,7 @@
 <div class="head page">
   <div><a href="/sources" class="back">All sources</a><h1>{{ s.name }}</h1>
     <div class="sub">{% for u in urls %}<a href="{{ u }}" target="_blank" rel="noopener">{{ u }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</div>
-    <div class="sub">Saves to <a href="/settings#folders">{{ dest.name }}</a> <code>{{ dest.path }}</code></div></div>
+    {% set host = host_path(dest.path) %}<div class="sub">Saves to <a href="/settings#folders">{{ dest.name }}</a> <code>{{ host or dest.path }}</code></div></div>
   <div class="row">
     {% if indexing %}<span class="badge downloading" data-reload-when-idle>indexing…</span>{% else %}
     <form method="post" action="/sources/{{ s.id }}/index"><button class="sm">Check now</button></form>{% endif %}

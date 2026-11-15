@@ -65,9 +65,15 @@ def root_of(path: Path) -> Path | None:
     return next((r for r in roots() if path == r or path.is_relative_to(r)), None)
 
 
+# os.path.exists/isdir never raise; Path.exists() raises PermissionError on Python 3.13 when a parent
+# folder isn't readable by the container user, which crashed the Settings page.
+def exists(p) -> bool:
+    return os.path.exists(p)
+
+
 def mount_point(path: Path) -> Path:
     p = Path(os.path.abspath(path))
-    while not p.exists():
+    while not exists(p):
         p = p.parent
     while not os.path.ismount(p):
         p = p.parent
@@ -80,23 +86,60 @@ SYSTEM_MOUNTS = ("/proc", "/sys", "/dev", "/run", "/snap", "/boot", "/tmp", "/et
                  "/opt", "/app", "/home")
 
 
+def _unescape(s: str) -> str:
+    return re.sub(r"\\(\d{3})", lambda m: chr(int(m.group(1), 8)), s)
+
+
+def mounts() -> dict[str, str | None]:
+    """Container mount point -> folder on the server, where mountinfo tells us (Unraid user shares
+    and array disks); None when it can't (e.g. a pool's subvolume)."""
+    out = {}
+    try:
+        lines = Path("/proc/self/mountinfo").read_text().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        f = line.split()
+        try:
+            root, mp = _unescape(f[3]), _unescape(f[4])
+            fstype, src = f[f.index("-") + 1], f[f.index("-") + 2]
+        except (IndexError, ValueError):
+            continue
+        host = None
+        if fstype.startswith("fuse.shfs"):
+            host = "/mnt/user" + (root if root != "/" else "")
+        elif m := re.fullmatch(r"/dev/md(\d+)(p\d+)?", src):
+            host = f"/mnt/disk{m.group(1)}" + (root if root != "/" else "")
+        out[mp] = host
+    return out
+
+
+def host_path(path) -> str | None:
+    """Where a container path lives on the server, e.g. /downloads/X -> /mnt/user/Data/Media/YouTube/X."""
+    p = Path(os.path.abspath(path))
+    best = None
+    for mp, host in mounts().items():
+        if mp != "/" and (p == Path(mp) or p.is_relative_to(mp)) and (best is None or len(mp) > len(best[0])):
+            best = (mp, host)
+    if not best or not best[1]:
+        return None
+    rest = p.relative_to(best[0])
+    return best[1] + ("" if str(rest) == "." else "/" + str(rest))
+
+
 def volumes() -> list[Path]:
     """Directories mapped into the container (Unraid Paths), minus /config and system mounts."""
     found = {config.DOWNLOADS_DIR}
-    try:
-        for line in Path("/proc/self/mountinfo").read_text().splitlines():
-            mp = re.sub(r"\\(\d{3})", lambda m: chr(int(m.group(1), 8)), line.split()[4])
-            if mp == "/" or mp.startswith(SYSTEM_MOUNTS) or Path(mp) == config.CONFIG_DIR:
-                continue
-            found.add(Path(mp))
-    except OSError:
-        pass
-    return sorted(p for p in found if p.is_dir())
+    for mp in mounts():
+        if mp == "/" or mp.startswith(SYSTEM_MOUNTS) or Path(mp) == config.CONFIG_DIR:
+            continue
+        found.add(Path(mp))
+    return sorted(p for p in found if os.path.isdir(p))
 
 
 def _subdirs(p: Path) -> list[Path]:
     try:
-        return sorted((c for c in p.iterdir() if c.is_dir() and not c.name.startswith((".", "@"))),
+        return sorted((c for c in p.iterdir() if os.path.isdir(c) and not c.name.startswith((".", "@"))),
                       key=lambda c: c.name.lower())
     except OSError:
         return []
@@ -140,7 +183,7 @@ def check(path: str) -> tuple[bool, str, str]:
     if reason := forbidden(path):
         return False, "Not allowed", reason
     existing = p
-    while not existing.exists():
+    while not exists(existing):
         existing = existing.parent
     if (IN_CONTAINER and mount_point(p) == Path("/")) or existing == Path("/"):
         top = "/" + p.parts[1] if len(p.parts) > 1 else path
@@ -148,4 +191,4 @@ def check(path: str) -> tuple[bool, str, str]:
                                      f"add a Path: container {top} → host folder (e.g. /mnt/user/Data/Media).")
     if not os.access(existing, os.W_OK):
         return False, "No write access", f"Dailies can't write to {existing}. Check the share's permissions."
-    return True, "Ready", "" if p.exists() else "Folder is created on the first download."
+    return True, "Ready", "" if exists(p) else "Folder is created on the first download."

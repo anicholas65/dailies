@@ -1,4 +1,5 @@
 import time
+import os
 
 import pytest
 
@@ -582,3 +583,112 @@ def test_folder_paths_guarded(client):
                         follow_redirects=True)
         assert db.one("SELECT 1 FROM folders WHERE name='X'") is None, bad
         assert "system folder" in r.text or "Google sign-in data" in r.text, bad
+
+
+def test_unreadable_folder_does_not_break_settings(client, tmp_path, monkeypatch):
+    from app import folders
+    locked = tmp_path / "locked"
+    (locked / "sub").mkdir(parents=True)
+    locked.chmod(0)
+    try:
+        usable, short, _ = folders.check(str(locked / "sub" / "Movies"))
+        if os.geteuid() != 0:
+            assert not usable and short == "No write access"
+        db.run("UPDATE folders SET path=? WHERE name='Movies'", (str(locked / "sub" / "Movies"),))
+        assert client.get("/settings").status_code == 200
+    finally:
+        locked.chmod(0o755)
+
+
+def test_host_paths_from_mountinfo(client, tmp_path, monkeypatch):
+    from app import folders
+    info = tmp_path / "mountinfo"
+    info.write_text(
+        "1 0 0:1 / / rw - overlay overlay rw\n"
+        "2 1 0:40 /Data/Media/YouTube /downloads rw,noatime - fuse.shfs shfs rw\n"
+        "3 1 0:40 /Data/Media /media rw,noatime - fuse.shfs shfs rw\n"
+        "4 1 9:1 /appdata/dailies /config rw - xfs /dev/md1p1 rw\n"
+        "5 1 0:50 /appdata/x /pool rw - btrfs /dev/nvme0n1p1 rw\n")
+    real = folders.Path
+
+    monkeypatch.setattr(folders, "Path", lambda p=".", *a: real(info) if p == "/proc/self/mountinfo" else real(p, *a))
+    assert folders.host_path("/downloads") == "/mnt/user/Data/Media/YouTube"
+    assert folders.host_path("/downloads/Greg/Season 2026") == "/mnt/user/Data/Media/YouTube/Greg/Season 2026"
+    assert folders.host_path("/media/Movies") == "/mnt/user/Data/Media/Movies"
+    assert folders.host_path("/config") == "/mnt/disk1/appdata/dailies"
+    assert folders.host_path("/pool/a") is None and folders.host_path("/elsewhere") is None
+
+
+def test_error_page_says_what_broke(client, monkeypatch):
+    from app import folders
+    monkeypatch.setattr(folders, "locations", lambda: 1 / 0)
+    with _NoRaise(client) as c:
+        r = c.get("/settings")
+    assert r.status_code == 500 and "ZeroDivisionError" in r.text
+    assert db.one("SELECT 1 FROM log WHERE message LIKE '%/settings failed%'")
+
+
+class _NoRaise:
+    def __init__(self, client):
+        from fastapi.testclient import TestClient
+        self.c = TestClient(client.app, raise_server_exceptions=False)
+        self.c.cookies = client.cookies
+
+    def __enter__(self):
+        return self.c
+
+    def __exit__(self, *a):
+        pass
+
+
+def test_queue_stop_and_start(client):
+    from app import worker
+    try:
+        client.post("/queue/stop")
+        assert worker.state["paused"] and db.setting("queue_paused") == "1"
+        assert "Start downloads" in client.get("/").text
+        client.post("/queue/start")
+        assert not worker.state["paused"] and db.setting("queue_paused") == "0"
+        assert "Stop downloads" in client.get("/").text
+    finally:
+        worker.state.update(paused=False, pause_reason="")
+
+
+def test_video_start_stop_resume(client, monkeypatch):
+    from app import worker
+    client.post("/sources", data={"url": "https://www.youtube.com/@c", "name": "Chan"})
+    a, b = _video(1, "aaa", "queued"), _video(1, "bbb", "queued")
+    try:
+        worker.state["paused"] = True
+        client.post(f"/media/{b}/start")  # front of the queue, queue running again
+        assert not worker.state["paused"]
+        assert db.one("SELECT priority FROM media WHERE id=?", (b,))["priority"] > 0
+        client.post(f"/media/{a}/stop")
+        assert db.one("SELECT status FROM media WHERE id=?", (a,))["status"] == "stopped"
+        assert "Resume" in client.get("/").text
+        client.post(f"/media/{a}/resume")
+        assert db.one("SELECT status FROM media WHERE id=?", (a,))["status"] == "queued"
+    finally:
+        worker.state.update(paused=False, pause_reason="")
+
+
+def test_stopping_a_running_download(client, monkeypatch):
+    client.post("/sources", data={"url": "https://www.youtube.com/@c", "name": "Chan"})
+    mid = _video(1, "vid", "queued")
+
+    class FakeYDL:
+        def __init__(self, opts): self.opts = opts
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def extract_info(self, url, download=False):
+            return {"id": "vid", "title": "T", "upload_date": "20250101", "duration": 100}
+        def process_ie_result(self, info, download=True):
+            client.post(f"/media/{mid}/stop")  # user clicks Stop mid-download
+            for h in self.opts["progress_hooks"]:
+                h({"status": "downloading", "downloaded_bytes": 5, "total_bytes": 10})
+            raise AssertionError("not cancelled")
+
+    monkeypatch.setattr(ytdl.yt_dlp, "YoutubeDL", FakeYDL)
+    assert ytdl.download(mid) == "stopped"
+    m = db.one("SELECT * FROM media WHERE id=?", (mid,))
+    assert m["status"] == "stopped" and m["error"] is None and not ytdl.cancel

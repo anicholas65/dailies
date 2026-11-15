@@ -15,6 +15,7 @@ from . import __version__, browser, config, db, folders, worker, ytdl
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
 templates.env.globals["version"] = __version__
+templates.env.globals["host_path"] = folders.host_path
 
 
 @asynccontextmanager
@@ -128,6 +129,25 @@ def page(request, name, **ctx):
     return templates.TemplateResponse(request, name, ctx)
 
 
+@app.exception_handler(Exception)
+async def server_error(request: Request, exc: Exception):
+    """Say what broke instead of a bare "Internal Server Error", and keep it in the activity log."""
+    import html
+    import traceback
+    msg = f"{type(exc).__name__}: {exc}"
+    try:
+        db.log("error", f"{request.method} {request.url.path} failed: {msg}"[:2000])
+    except Exception:
+        pass
+    traceback.print_exception(exc)
+    return HTMLResponse(
+        '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<link rel="stylesheet" href="/static/style.css"><title>Dailies error</title>'
+        f'<main><h1>Something went wrong</h1><p class="lede">{html.escape(request.url.path)} failed '
+        f'with:</p><pre class="banner warn">{html.escape(msg)}</pre><p><a href="/">Back to Today</a></p></main>',
+        status_code=500)
+
+
 def back(url="/"):
     return RedirectResponse(url, status_code=303)
 
@@ -142,9 +162,8 @@ def yt(msg: str, ok=None):
 
 def resume_if_login_paused():
     if worker.state["pause_reason"] and browser.status()["signed_in"]:
-        worker.state.update(paused=False, pause_reason="")
         db.run("UPDATE media SET status='queued', error=NULL WHERE status='failed' AND error LIKE '%sign in%'")
-        worker.kick()
+        worker.set_paused(False)
 
 
 def media_where(status="", q="", source_id=None) -> tuple[str, list]:
@@ -227,8 +246,10 @@ def dashboard(request: Request):
         counts=counts(),
         sources=db.q("SELECT COUNT(*) n FROM sources")[0]["n"],
         queue=db.q("SELECT m.*, s.name source FROM media m JOIN sources s ON s.id=m.source_id "
-                   "WHERE m.status IN ('queued','downloading') "
-                   "ORDER BY m.status='downloading' DESC, m.upload_date DESC LIMIT 15"),
+                   "WHERE m.status IN ('queued','downloading','stopped') "
+                   "ORDER BY m.status='downloading' DESC, m.status='stopped', m.priority DESC, "
+                   "m.upload_date IS NULL, m.upload_date DESC LIMIT 15"),
+        stopped=db.one("SELECT COUNT(*) n FROM media WHERE status='stopped'")["n"],
         recent=db.q("SELECT m.*, s.name source FROM media m JOIN sources s ON s.id=m.source_id "
                     "WHERE m.status='downloaded' ORDER BY m.downloaded DESC LIMIT 10"),
         failed=db.q("SELECT m.*, s.name source FROM media m JOIN sources s ON s.id=m.source_id "
@@ -352,6 +373,15 @@ async def media_action(request: Request, mid: int, action: str):
     if action in ("queue", "retry"):
         db.run("UPDATE media SET status='queued', error=NULL WHERE id=?", (mid,))
         worker.kick()
+    elif action in ("start", "resume"):  # front of the queue, and make sure the queue is running
+        top = db.one("SELECT COALESCE(MAX(priority), 0) p FROM media WHERE status='queued'")["p"]
+        db.run("UPDATE media SET status='queued', error=NULL, priority=? WHERE id=?", (top + 1, mid))
+        worker.set_paused(False)
+    elif action == "stop":
+        if m["status"] == "downloading":
+            ytdl.cancel[mid] = "stopped"
+        elif m["status"] == "queued":
+            db.run("UPDATE media SET status='stopped', priority=0 WHERE id=?", (mid,))
     elif action == "skip":
         db.run("UPDATE media SET status='skipped' WHERE id=?", (mid,))
     elif action == "delete":
@@ -385,11 +415,15 @@ def retry_failed():
 
 
 @app.post("/queue/{action}")
-def queue_control(action: str):
-    worker.state["paused"] = action == "pause"
-    worker.state["pause_reason"] = ""
-    worker.kick()
-    return back("/")
+def queue_control(request: Request, action: str):
+    if action in ("stop", "pause"):
+        worker.stop_downloads()
+    elif action == "resume-stopped":
+        db.run("UPDATE media SET status='queued' WHERE status='stopped'")
+        worker.set_paused(False)
+    else:  # start / resume
+        worker.set_paused(False)
+    return back(request.headers.get("referer") or "/")
 
 
 @app.get("/profiles", response_class=HTMLResponse)
@@ -558,10 +592,12 @@ def settings(request: Request, msg: str = ""):
     import yt_dlp.version
     vals = {k: db.setting(k) for k in db.DEFAULT_SETTINGS}
     used = {r["folder_id"]: r["n"] for r in db.q("SELECT folder_id, COUNT(*) n FROM sources GROUP BY folder_id")}
-    rows = [dict(f, check=folders.check(f["path"]), sources=used.get(f["id"], 0)) for f in folders.all_folders()]
+    rows = [dict(f, check=folders.check(f["path"]), sources=used.get(f["id"], 0), host=folders.host_path(f["path"]))
+            for f in folders.all_folders()]
+    locations = folders.locations()
     return page(request, "settings.html", s=vals, ytdlp=yt_dlp.version.__version__,
                 downloads=config.DOWNLOADS_DIR, folders=rows, layouts=folders.LAYOUTS, msg=msg,
-                locations=folders.locations(),
+                locations=locations, hosts={v: folders.host_path(v) for v in locations},
                 default_folder=db.setting("default_folder"), default_audio_folder=db.setting("default_audio_folder"),
                 log=db.q("SELECT * FROM log ORDER BY id DESC LIMIT 200"))
 

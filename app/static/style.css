@@ -105,7 +105,7 @@ details.card[open]>summary::before{transform:translateY(2px) rotate(90deg)}
 .badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;color:var(--muted)}
 .badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
 .badge.downloaded{color:var(--ok)}.badge.failed{color:var(--bad)}
-.badge.downloading,.badge.queued{color:var(--cyan)}.badge.pending{color:var(--warn)}
+.badge.downloading,.badge.queued{color:var(--cyan)}.badge.pending,.badge.stopped{color:var(--warn)}
 
 /* ---- tables (sources) ---- */
 table.list{width:100%;border-collapse:collapse}

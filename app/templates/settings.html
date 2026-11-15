@@ -6,7 +6,7 @@
   <select name="path" form="{{ form_id }}" data-path-select aria-label="Location">
     {% if not current %}<option value="" selected disabled>Choose a location</option>{% endif %}
     {% if current and current not in known %}<option value="{{ current }}" selected>{{ current }}</option>{% endif %}
-    {% for vol, paths in locations.items() %}<optgroup label="Mapped: {{ vol }}">{% for x in paths %}<option value="{{ x }}" {{ 'selected' if x == current }}>{{ x }}</option>{% endfor %}</optgroup>{% endfor %}
+    {% for vol, paths in locations.items() %}<optgroup label="{{ vol }}{{ ' (server: ' ~ hosts[vol] ~ ')' if hosts[vol] }}">{% for x in paths %}<option value="{{ x }}" {{ 'selected' if x == current }}>{{ x }}</option>{% endfor %}</optgroup>{% endfor %}
     <option value="__custom">Type a path…</option>
   </select>
   <input name="path_custom" form="{{ form_id }}" placeholder="/media/Movies" aria-label="Path" hidden>
@@ -19,7 +19,7 @@
 {% if msg %}<div class="banner">{{ msg }}</div>{% endif %}
 <section class="card" id="folders">
   <h2>Download folders</h2>
-  <p class="muted">Each source saves into one of these. Pick a location from the shares mapped into the container{% if locations %} ({% for v in locations %}<code>{{ v }}</code>{{ ', ' if not loop.last }}{% endfor %}){% endif %}, optionally with a new subfolder. To offer more of your server, add a Path in the Unraid container settings, for example container <code>/media</code> → host <code>/mnt/user/Data/Media</code>. In Jellyfin, add each folder as a library with the same layout.</p>
+  <p class="muted">Each source saves into one of these. Pick a location from the shares mapped into the container{% if locations %} ({% for v in locations %}<code>{{ v }}</code>{% if hosts[v] %} = <code>{{ hosts[v] }}</code>{% endif %}{{ ', ' if not loop.last }}{% endfor %}){% endif %}, optionally with a new subfolder. To offer more of your server, add a Path in the Unraid container settings, for example container <code>/media</code> → host <code>/mnt/user/Data/Media</code>. In Jellyfin, add each folder as a library with the same layout.</p>
   <table class="list folders">
     <thead><tr><th>Name</th><th>Path in container</th><th>Jellyfin layout</th><th>Status</th><th></th></tr></thead>
     <tbody>
@@ -27,6 +27,7 @@
     <tr>
       <td><input name="name" value="{{ f.name }}" form="folder-{{ f.id }}" required aria-label="Name"></td>
       <td class="title">{{ path_picker('folder-' ~ f.id, f.path) }}
+        {% if f.host %}<div class="sub">On the server: <code>{{ f.host }}</code></div>{% endif %}
         <div class="sub {{ 'err' if not f.check[0] }}">{{ f.check[2] or layouts[f.layout][1] }}{% if f.sources %} Used by {{ f.sources }} source{{ '' if f.sources == 1 else 's' }}.{% endif %}</div></td>
       <td><select name="layout" form="folder-{{ f.id }}" aria-label="Layout">{% for k, l in layouts.items() %}<option value="{{ k }}" {{ 'selected' if f.layout == k }}>{{ l[0] }}</option>{% endfor %}</select></td>
       <td class="nowrap"><span class="badge {{ 'downloaded' if f.check[0] else 'failed' }}">{{ f.check[1] }}</span></td>

@@ -8,7 +8,7 @@
 <form class="row filter" method="get">
   <input name="q" value="{{ q }}" placeholder="Search titles">
   <select name="status" onchange="this.form.submit()"><option value="">All except deleted</option>
-    {% for st in ['queued','downloading','downloaded','pending','failed','skipped','deleted'] %}<option {{ 'selected' if status == st }} value="{{ st }}">{{ st }} ({{ counts.get(st, 0) }})</option>{% endfor %}
+    {% for st in ['queued','downloading','stopped','downloaded','pending','failed','skipped','deleted'] %}<option {{ 'selected' if status == st }} value="{{ st }}">{{ st }} ({{ counts.get(st, 0) }})</option>{% endfor %}
   </select>
   <button class="sm">Search</button>
 </form>
