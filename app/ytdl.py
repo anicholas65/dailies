@@ -332,7 +332,18 @@ def best_thumbnail(info) -> str | None:
     return best["url"]
 
 
+_shows_refreshed: set[Path] = set()  # show folders whose artwork this refresh run already re-fetched
+
+
 def refresh(media_id: int) -> str:
+    try:
+        return _refresh(media_id)
+    finally:
+        if not db.one("SELECT 1 FROM media WHERE refresh=1 AND status='downloaded'"):
+            _shows_refreshed.clear()  # run finished: the next one fetches show artwork again
+
+
+def _refresh(media_id: int) -> str:
     """Move a downloaded file to its profile's current name/layout and rewrite thumbnail, NFO, show
     artwork and embedded tags from fresh YouTube metadata. The media itself is not re-downloaded."""
     item = db.one("SELECT * FROM media WHERE id=?", (media_id,))
@@ -360,7 +371,9 @@ def refresh(media_id: int) -> str:
                 thumb.write_bytes(to_jpeg(ydl.urlopen(url).read()))
             if profile["write_nfo"] and not audio:
                 write_nfo(new, info, source)
-                write_show_files(show_dir(new), source, info, ydl)
+                show = show_dir(new)
+                write_show_files(show, source, info, ydl, force=show not in _shows_refreshed)
+                _shows_refreshed.add(show)
         embed_tags(new, info, profile, thumb if thumb.exists() else None)
         if thumb.exists() and not profile["write_thumbnail"]:
             thumb.unlink()
@@ -486,11 +499,12 @@ def write_nfo(path: Path, info, source):
     path.with_suffix(".nfo").write_text(body, encoding="utf-8")
 
 
-def write_show_files(folder: Path, source, info, ydl):
-    """tvshow.nfo + poster.jpg (channel avatar) + fanart.jpg (channel banner), once per show folder."""
+def write_show_files(folder: Path, source, info, ydl, force: bool = False):
+    """tvshow.nfo + poster.jpg (channel avatar) + fanart.jpg (channel banner), once per show folder.
+    force: fetch them again and overwrite (existing art is kept if the fetch fails)."""
     e = lambda v: html.escape(str(v or ""))  # noqa: E731
     art = {"poster.jpg": "avatar_uncropped", "fanart.jpg": "banner_uncropped"}
-    missing = [n for n in art if not (folder / n).exists()]
+    missing = [n for n in art if force or not (folder / n).exists()]
     if (folder / "tvshow.nfo").exists() and not missing:
         return
     channel = {}
@@ -499,7 +513,7 @@ def write_show_files(folder: Path, source, info, ydl):
             channel = ydl.extract_info(url, download=False, process=False) or {}
         except Exception as exc:  # artwork is nice-to-have
             db.log("warn", f"Channel artwork for {source['name']}: {clean_error(exc)[:200]}")
-    if not (folder / "tvshow.nfo").exists():
+    if force or not (folder / "tvshow.nfo").exists():
         (folder / "tvshow.nfo").write_text(
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<tvshow>\n'
             f"  <title>{e(info.get('series') or source['name'])}</title>\n"

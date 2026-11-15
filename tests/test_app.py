@@ -369,3 +369,32 @@ def test_move_with_sidecars(client, tmp_path):
     assert ytdl.move_with_sidecars(old, new) == new
     assert sorted(p.name for p in new.parent.iterdir()) == ["s2026e052301 - T [a].en.vtt", "s2026e052301 - T [a].mp4"]
     assert not d.exists()  # emptied folder pruned
+
+
+def test_show_artwork_refetched_when_forced(client, tmp_path):
+    """Rename & refresh re-downloads poster/fanart/tvshow.nfo; normal downloads leave them alone."""
+    import io
+    jpeg = lambda tag: b"\xff\xd8\xff" + tag  # noqa: E731
+
+    class FakeYdl:
+        def __init__(self, tag):
+            self.tag = tag
+
+        def extract_info(self, url, download=False, process=False):
+            return {"description": "About", "thumbnails": [{"id": "avatar_uncropped", "url": "a"},
+                                                           {"id": "banner_uncropped", "url": "b"}]}
+
+        def urlopen(self, url):
+            return io.BytesIO(jpeg(self.tag + url.encode()))
+
+    src = {"name": "S", "kind": "video"}
+    info = {"channel_url": "c", "series": "Greg", "channel": "Greg"}
+    ytdl.write_show_files(tmp_path, src, info, FakeYdl(b"old"))
+    assert (tmp_path / "poster.jpg").read_bytes() == jpeg(b"olda")
+    assert "<title>Greg</title>" in (tmp_path / "tvshow.nfo").read_text()
+    ytdl.write_show_files(tmp_path, src, info | {"series": "Greg 2"}, FakeYdl(b"new"))
+    assert (tmp_path / "poster.jpg").read_bytes() == jpeg(b"olda")  # not forced: untouched
+    ytdl.write_show_files(tmp_path, src, info | {"series": "Greg 2"}, FakeYdl(b"new"), force=True)
+    assert (tmp_path / "poster.jpg").read_bytes() == jpeg(b"newa")
+    assert (tmp_path / "fanart.jpg").read_bytes() == jpeg(b"newb")
+    assert "<title>Greg 2</title>" in (tmp_path / "tvshow.nfo").read_text()
