@@ -1,3 +1,4 @@
+import json
 import time
 import os
 
@@ -408,6 +409,60 @@ def test_show_artwork_refetched_when_forced(client, tmp_path):
     assert (tmp_path / "poster.jpg").read_bytes() == jpeg(b"newa")
     assert (tmp_path / "fanart.jpg").read_bytes() == jpeg(b"newb")
     assert "<title>Greg 2</title>" in (tmp_path / "tvshow.nfo").read_text()
+
+
+def test_show_artwork_retries_after_fallback(client, tmp_path, monkeypatch):
+    """Channel art failed -> video thumbnail stands in, and the real art replaces it on a later download."""
+    import io
+    jpeg = lambda tag: b"\xff\xd8\xff" + tag  # noqa: E731
+    monkeypatch.setattr(ytdl, "tall_poster", lambda d: d + b"|tall")
+
+    class FakeYdl:
+        def __init__(self, channel_ok):
+            self.channel_ok, self.channel_calls = channel_ok, 0
+
+        def extract_info(self, url, download=False, process=False):
+            self.channel_calls += 1
+            if not self.channel_ok:
+                raise RuntimeError("Sign in to confirm you're not a bot")
+            return {"thumbnails": [{"id": "avatar_uncropped", "url": "a"}, {"id": "banner_uncropped", "url": "b"}]}
+
+        def urlopen(self, url):
+            return io.BytesIO(jpeg(url.encode()))
+
+    src = {"name": "S", "kind": "channel"}
+    info = {"channel_url": "c", "series": "Greg", "thumbnail": "thumb"}
+    ytdl.write_show_files(tmp_path, src, info, FakeYdl(False))
+    assert (tmp_path / "poster.jpg").read_bytes() == jpeg(b"thumb") + b"|tall"  # stand-in
+    again = FakeYdl(True)
+    ytdl.write_show_files(tmp_path, src, info, again)
+    assert again.channel_calls == 0  # retried at most once a day
+    st = json.loads(db.setting(f"show_art:{tmp_path}"))
+    db.set_setting(f"show_art:{tmp_path}", json.dumps(st | {"tried": 0}))
+    ytdl.write_show_files(tmp_path, src, info, again)
+    assert (tmp_path / "poster.jpg").read_bytes() == jpeg(b"a") + b"|tall"  # real channel avatar now
+    assert (tmp_path / "fanart.jpg").read_bytes() == jpeg(b"b")
+    done = FakeYdl(True)
+    ytdl.write_show_files(tmp_path, src, info, done)
+    assert done.channel_calls == 0  # nothing left to fix
+
+
+def test_show_artwork_upgrades_old_square_poster(client, tmp_path, monkeypatch):
+    import io
+    monkeypatch.setattr(ytdl, "tall_poster", lambda d: d + b"|tall")
+
+    class FakeYdl:
+        def extract_info(self, url, download=False, process=False):
+            return {"thumbnails": [{"id": "avatar_uncropped", "url": "a"}, {"id": "banner_uncropped", "url": "b"}]}
+
+        def urlopen(self, url):
+            return io.BytesIO(b"\xff\xd8\xff" + url.encode())
+
+    for n in ("tvshow.nfo", "poster.jpg", "fanart.jpg"):  # a show folder from 0.1.19 or earlier
+        (tmp_path / n).write_bytes(b"old")
+    ytdl.write_show_files(tmp_path, {"name": "S"}, {"channel_url": "c"}, FakeYdl())
+    assert (tmp_path / "poster.jpg").read_bytes().endswith(b"|tall")
+    assert (tmp_path / "tvshow.nfo").read_bytes() == b"old"
 
 
 def _video(sid, vid, status="downloaded", title=None):

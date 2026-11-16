@@ -6,7 +6,7 @@ Self-hosted YouTube archiver for Unraid, in the spirit of Pinchflat — with **Y
 - Scheduled checks, download queue with live progress, retries, auto-pause on YouTube's bot check
 - Profiles: quality cap (4K…480p, audio-only), MP4/MKV, prefer H.264, subtitles, SponsorBlock, chapters, thumbnails, Jellyfin/Plex/Kodi `.nfo`
 - Download folders (Settings): YouTube, Educational, Movies, Concerts, MP3 out of the box, each with a Jellyfin layout (Shows, Movies or Music); every source picks one, audio-only sources default to MP3
-- Files are organised by publisher: `Channel/Season YYYY/sYYYYeMMDDnn - Title [id].mp4`, whatever source (channel, playlist or single video) they came from. The video thumbnail is embedded as cover art and saved as `-thumb.jpg`; the channel avatar/banner become the show poster/fanart
+- Files are organised by publisher: `Channel/Season YYYY/sYYYYeMMDDnn - Title [id].mp4`, whatever source (channel, playlist or single video) they came from. The video thumbnail is embedded as cover art and saved as `-thumb.jpg`; the channel avatar becomes the show poster (fitted on a 2:3 poster so Jellyfin doesn't crop it) and the banner the fanart. If the channel art can't be fetched, a video thumbnail stands in and the real art is retried once a day
 - Per-source filters: newest N, skip uploads before a date, title include/exclude regex, minimum length, Shorts/livestream toggles, auto-delete after N days
 - yt-dlp + deno (YouTube JS challenges) + ffmpeg; yt-dlp self-updates on container start
 

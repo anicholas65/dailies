@@ -1,6 +1,7 @@
 """yt-dlp integration: option building, indexing sources, downloading media."""
 import datetime as dt
 import html
+import json
 import re
 import shutil
 import time
@@ -590,13 +591,29 @@ def write_nfo(path: Path, info, source):
     path.with_suffix(".nfo").write_text(body, encoding="utf-8")
 
 
+ART_RETRY_HOURS = 24
+POSTER_SIZE = (1000, 1500)  # Jellyfin/Kodi show posters are 2:3
+
+
 def write_show_files(folder: Path, source, info, ydl, force: bool = False):
-    """tvshow.nfo + poster.jpg (channel avatar) + fanart.jpg (channel banner), once per show folder.
-    force: fetch them again and overwrite (existing art is kept if the fetch fails)."""
+    """tvshow.nfo + poster.jpg (channel avatar on a 2:3 poster) + fanart.jpg (channel banner) per show folder.
+    If the channel art couldn't be fetched, the video thumbnail stands in and the real art is retried
+    on later downloads (at most once a day) until it arrives. force: fetch everything again and
+    overwrite (existing art is kept if the fetch fails)."""
     e = lambda v: html.escape(str(v or ""))  # noqa: E731
     art = {"poster.jpg": "avatar_uncropped", "fanart.jpg": "banner_uncropped"}
-    missing = [n for n in art if force or not (folder / n).exists()]
-    if (folder / "tvshow.nfo").exists() and not missing:
+    key = f"show_art:{folder}"
+    try:
+        state = json.loads(db.setting(key) or "{}")
+    except ValueError:
+        state = {}
+    # "ok" = real channel art in the current poster style; anything else (missing, fallback, a
+    # square poster from before 0.1.20) gets another go
+    missing = [n for n in art if force or not (folder / n).exists() or state.get(n) != "ok"]
+    have_files = all((folder / n).exists() for n in art) and (folder / "tvshow.nfo").exists()
+    if not missing and (folder / "tvshow.nfo").exists():
+        return
+    if not force and have_files and time.time() - state.get("tried", 0) < ART_RETRY_HOURS * 3600:
         return
     channel = {}
     if url := info.get("channel_url"):
@@ -615,14 +632,39 @@ def write_show_files(folder: Path, source, info, ydl, force: bool = False):
             "</tvshow>\n", encoding="utf-8")
     thumbs = {t.get("id"): t.get("url") for t in channel.get("thumbnails") or []}
     for name in missing:
-        # no channel art (or it failed to load): the video's own thumbnail stands in
-        if not (url := thumbs.get(art[name]) or best_thumbnail(info)):
+        real = thumbs.get(art[name])
+        if not real and (folder / name).exists():
+            continue  # keep what's there; try the channel again later
+        # no channel art (or it failed to load): the video's own thumbnail stands in for now
+        if not (url := real or best_thumbnail(info)):
             continue
         try:
-            data = ydl.urlopen(url).read()
-            (folder / name).write_bytes(to_jpeg(data))
+            data = to_jpeg(ydl.urlopen(url).read())
+            (folder / name).write_bytes(tall_poster(data) if name == "poster.jpg" else data)
+            state[name] = "ok" if real else "fallback"
         except Exception as exc:
             db.log("warn", f"{name} for {source['name']}: {clean_error(exc)[:200]}")
+    state["tried"] = time.time()
+    db.set_setting(key, json.dumps(state))
+
+
+def tall_poster(data: bytes) -> bytes:
+    """Fit any image (square channel avatar, 16:9 thumbnail) on a 2:3 poster over a blurred, darkened
+    copy of itself, so Jellyfin's poster grid doesn't crop it. Returns the image unchanged on failure."""
+    import subprocess
+    w, h = POSTER_SIZE
+    fg = int(w * 0.84)
+    graph = (f"[0]split[a][b];[a]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
+             f"boxblur=40:3,eq=brightness=-0.18:saturation=1.15[bg];"
+             f"[b]scale={fg}:{fg}:force_original_aspect_ratio=decrease[fg];"
+             f"[bg][fg]overlay=(W-w)/2:(H-h)/2")
+    try:
+        out = subprocess.run(["ffmpeg", "-v", "error", "-i", "pipe:0", "-filter_complex", graph, "-frames:v", "1",
+                              "-f", "image2", "-c:v", "mjpeg", "-q:v", "2", "pipe:1"],
+                             input=data, capture_output=True, check=True, timeout=60)
+        return out.stdout or data
+    except Exception:
+        return data
 
 
 def to_jpeg(data: bytes) -> bytes:
