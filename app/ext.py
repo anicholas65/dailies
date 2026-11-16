@@ -168,6 +168,10 @@ async def download(request: Request):
             db.run("UPDATE media SET status='queued', error=NULL, priority=? WHERE id=?", (top + 1, old["id"]))
             worker.kick()
             return {"ok": True, "message": f"Queued again: {old['title']}{_paused_note()}", "status": "queued"}
+    if kind != "video" and (old := _existing_source(url, kind)):
+        worker.index_now(old["id"])
+        return {"ok": True, "status": "exists", "source_id": old["id"],
+                "message": f"Already in Dailies: {old['name']}. Checking it for new videos now."}
     title = str(body.get("title") or "").strip()[:300]
     sid = db.run("INSERT INTO sources(name, url, kind, profile_id, folder_id, auto_name) VALUES (?, ?, ?, ?, ?, ?)",
                  (title or url.rsplit("/", 1)[-1], url, kind, profile["id"], fid, 0 if title else 1))
@@ -177,6 +181,24 @@ async def download(request: Request):
     return {"ok": True, "status": "queued", "source_id": sid,
             "message": f"{what}: {title or url}" + ("" if kind == "video" else ". New uploads download on its schedule.")
             + _paused_note()}
+
+
+def _series_key(url: str, kind: str) -> str:
+    """Comparable identity of a channel or playlist URL (tab, query and case ignored for channels)."""
+    if kind == "playlist":
+        m = re.search(r"[?&]list=([\w-]+)", url)
+        return "list:" + (m.group(1) if m else url)
+    path = re.sub(r"^https?://(www\.|m\.)?youtube\.com", "", url.split("?")[0].split("#")[0].rstrip("/"))
+    path = re.sub(r"/(featured|videos|shorts|streams|playlists|about)$", "", path)
+    return "channel:" + path.lower()
+
+
+def _existing_source(url: str, kind: str):
+    key = _series_key(url, kind)
+    for s in db.q("SELECT id, name, url, kind FROM sources WHERE kind=?", (kind,)):
+        if _series_key(s["url"], kind) == key:
+            return s
+    return None
 
 
 def _paused_note() -> str:

@@ -20,6 +20,7 @@ The `extension/` folder is a Chrome extension that works like Internet Download 
 
 - It sends Dailies your **youtube.com** cookies (never google.com ones) and resends them whenever Chrome rotates them, plus every 30 minutes.
 - A **Download** button on YouTube video, playlist and channel pages (and a right-click "Download with Dailies") queues the page on Dailies with the format (profile) and folder you pick.
+- On the YouTube home feed, search, subscriptions and sidebars, hovering a video tile shows a **Dailies** chip: add that video's **whole channel as a series**, its playlist, or just the video, without opening it. Adding a channel or playlist that's already in Dailies just re-checks it for new videos.
 
 Set up: YouTube page → **Download the extension**, unzip, `chrome://extensions` → Developer mode → **Load unpacked**. In the extension's settings enter the Dailies address and a key from **Create key** (needs `DAILIES_PASSWORD`). Only a hash of the key is stored; **Revoke key** cuts the extension off. Each yt-dlp run uses a private copy of `cookies.txt`, so a run can't overwrite a fresher sign-in the extension just sent.
 

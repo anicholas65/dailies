@@ -39,7 +39,8 @@ function dailiesKind(url) {
   return '';
 }
 
-// Renders the form into `root`. `page` = {url, title}. Returns nothing; all state lives in the DOM.
+// Renders the form into `root`. `page` = {url, title} or {choices: [{url, title, label}], title}.
+// With choices (a tile on the home feed) the user picks what to send: the video, its channel or its playlist.
 async function dailiesForm(root, page) {
   const el = (tag, props = {}, kids = []) => {
     const n = Object.assign(document.createElement(tag), props);
@@ -49,12 +50,19 @@ async function dailiesForm(root, page) {
   if (!root.querySelector('style.dly-css')) root.append(el('style', { className: 'dly-css', textContent: DAILIES_CSS }));
   const box = el('div', { className: 'dly' });
   root.append(box);
-  const kind = dailiesKind(page.url);
+  const choices = (page.choices || [{ url: page.url, title: page.title }])
+    .map(c => ({ ...c, kind: dailiesKind(c.url) })).filter(c => c.kind);
   const msg = el('p', { className: 'msg', role: 'status' });
-  box.append(el('h1', { textContent: kind === 'video' ? 'Download with Dailies' : 'Add to Dailies' }),
-    el('p', { className: 'what', textContent: page.title || page.url }));
+  const head = el('h1');
+  const what = el('p', { className: 'what' });
+  box.append(head, what);
+  const heading = c => {
+    head.textContent = c.kind === 'video' ? 'Download with Dailies' : 'Add to Dailies';
+    what.textContent = c.title || c.url;
+  };
+  heading(choices[0] || { kind: 'video', title: page.title, url: page.url });
 
-  if (!kind) {
+  if (!choices.length) {
     box.append(el('p', { className: 'what', textContent: 'Open a YouTube video, playlist or channel to send it to Dailies.' }));
     return box;
   }
@@ -69,10 +77,20 @@ async function dailiesForm(root, page) {
   }
   const saved = await chrome.storage.local.get(['profile_id', 'folder_id']);
   const opt = (value, text, sel) => el('option', { value, textContent: text, selected: String(value) === String(sel ?? '') });
+  const target = el('select', {}, choices.map((c, i) => opt(i, c.label || c.title || c.url, 0)));
   const profile = el('select', {}, info.data.profiles.map(p => opt(p.id, p.name, saved.profile_id)));
   const folder = el('select', {}, [opt('', 'Automatic', saved.folder_id),
     ...info.data.folders.map(f => opt(f.id, f.name, saved.folder_id))]);
-  const go = el('button', { className: 'go', textContent: kind === 'video' ? 'Download' : `Add ${kind}` });
+  const go = el('button', { className: 'go' });
+  const pick = () => choices[Number(target.value)] || choices[0];
+  const label = () => {
+    const c = pick();
+    heading(c);
+    go.textContent = c.kind === 'video' ? 'Download' : c.kind === 'channel' ? 'Add channel as a series' : 'Add playlist';
+  };
+  target.onchange = label;
+  label();
+  if (choices.length > 1) box.append(el('label', { textContent: 'What' }, [target]));
   box.append(el('label', { textContent: 'Format' }, [profile]), el('label', { textContent: 'Save to' }, [folder]), go, msg);
   if (!info.data.youtube.signed_in) {
     msg.textContent = 'Dailies isn\'t using your Chrome sign-in yet. It will sync when you download.';
@@ -83,7 +101,8 @@ async function dailiesForm(root, page) {
     msg.textContent = 'Sending…';
     const ids = { profile_id: Number(profile.value), folder_id: folder.value ? Number(folder.value) : null };
     chrome.storage.local.set(ids);
-    const r = await dailiesSend('download', { url: page.url, title: page.title, ...ids });
+    const c = pick();
+    const r = await dailiesSend('download', { url: c.url, title: c.title, ...ids });
     msg.className = 'msg ' + (r.ok ? 'ok' : 'bad');
     msg.textContent = r.ok ? r.data.message : r.error;
     go.disabled = false;

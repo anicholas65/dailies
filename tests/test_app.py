@@ -797,6 +797,23 @@ def test_extension_download(client, monkeypatch):
     assert bad.status_code == 400
 
 
+def test_extension_add_series_once(client, monkeypatch):
+    h = {"Authorization": f"Bearer {_ext_key(client, monkeypatch)}", "Origin": "chrome-extension://abcdef"}
+    r = client.post("/api/ext/download", headers=h, json={"url": "https://www.youtube.com/@SomeShow", "title": "Some Show"}).json()
+    assert r["ok"] and r["message"].startswith("Added channel: Some Show")
+    s = db.one("SELECT * FROM sources")
+    assert (s["kind"], s["name"]) == ("channel", "Some Show")
+    for url in ("https://www.youtube.com/@someshow/videos", "https://m.youtube.com/@SomeShow/featured?x=1"):
+        again = client.post("/api/ext/download", headers=h, json={"url": url, "title": "Some Show"}).json()
+        assert again["status"] == "exists" and again["message"].startswith("Already in Dailies: Some Show")
+    client.post("/api/ext/download", headers=h, json={"url": "https://www.youtube.com/playlist?list=PLabc", "title": "P"})
+    dup = client.post("/api/ext/download", headers=h, json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLabc"})
+    assert dup.json()["status"] == "queued"  # a video in a playlist is still just the video
+    dup = client.post("/api/ext/download", headers=h, json={"url": "https://youtube.com/playlist?list=PLabc&si=z"}).json()
+    assert dup["status"] == "exists"
+    assert db.one("SELECT COUNT(*) n FROM sources")["n"] == 3
+
+
 def test_extension_zip(client, monkeypatch):
     import io
     import json

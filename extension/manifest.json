@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Dailies",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Download YouTube videos to your Dailies server in the format you pick, using the YouTube sign-in you already have in Chrome.",
   "permissions": ["cookies", "storage", "alarms", "contextMenus"],
   "host_permissions": ["https://*.youtube.com/*"],
@@ -11,6 +11,6 @@
   "options_page": "options.html",
   "icons": { "128": "icon.png" },
   "content_scripts": [
-    { "matches": ["https://www.youtube.com/*", "https://m.youtube.com/*"], "js": ["ui.js", "content.js"], "run_at": "document_idle" }
+    { "matches": ["https://www.youtube.com/*", "https://m.youtube.com/*"], "js": ["ui.js", "content.js", "tiles.js"], "run_at": "document_idle" }
   ]
 }
