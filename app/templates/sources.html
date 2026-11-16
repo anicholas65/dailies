@@ -12,7 +12,7 @@
 <label>Save to <select name="folder_id"><option value="">Automatic (by profile)</option>{% for f in folders %}<option value="{{ f.id }}" >{{ f.name }}</option>{% endfor %}</select></label>
     <label>Check every (hours) <input name="interval_hours" type="number" step="0.5" min="0.5" value="6"></label>
     <label>Only newest N <input name="max_items" type="number" min="0" value="0" title="0 = everything"></label>
-    <label>Skip uploads before <input name="download_after" type="date"></label>
+    <label>Download <select name="since" title="Channels and playlists: which existing videos to download. Older ones are listed but not downloaded; new uploads always download.">{% for k, v in since.items() %}<option value="{{ k }}">{{ v[0] }}</option>{% endfor %}</select></label>
     <div class="wide row"><button>Add &amp; index</button></div>
   </form>
   <div class="feeds">

@@ -225,12 +225,37 @@ def youtube_title(kind: str, info) -> str | None:
     return (html.unescape(title).strip() or None) if title else None
 
 
+# "Download" range choices when adding a channel or playlist: key -> (label, days back; None = everything)
+SINCE = {"new": ("Only new uploads", 0), "3": ("Last 3 days", 3), "7": ("Last week", 7), "30": ("Last 30 days", 30),
+         "60": ("Last 60 days", 60), "90": ("Last 90 days", 90), "365": ("Last year", 365), "all": ("Everything", None)}
+
+
+def since_date(since) -> str | None:
+    """download_after (YYYY-MM-DD, '' = everything) for a SINCE key; None if the key is unknown."""
+    since = str(since or "").strip()
+    if since not in SINCE:
+        return None
+    days = SINCE[since][1]
+    return "" if days is None else (dt.date.today() - dt.timedelta(days=days)).isoformat()
+
+
+def entry_date(e) -> str | None:
+    """YYYYMMDD from a flat playlist entry. YouTube's "3 weeks ago" rounds down, so an approximate
+    date is never older than the real one: anything it puts before download_after really is older."""
+    if e.get("upload_date"):
+        return e["upload_date"]
+    ts = e.get("timestamp") or e.get("release_timestamp")
+    return dt.datetime.fromtimestamp(ts, dt.timezone.utc).strftime("%Y%m%d") if ts else None
+
+
 def index_source(source_id: int) -> int:
     """Fetch the source's video list and add new items. Returns count of new items."""
     source = db.one("SELECT * FROM sources WHERE id=?", (source_id,))
     if source is None:
         return 0
-    opts = base_opts() | {"extract_flat": "in_playlist", "skip_download": True}
+    opts = base_opts() | {"extract_flat": "in_playlist", "skip_download": True,
+                          "extractor_args": {"youtubetab": {"approximate_date": [""]}}}
+    after = (source["download_after"] or "").replace("-", "") if source["kind"] != "video" else ""
     if source["max_items"]:
         opts["playlistend"] = source["max_items"]
     new = 0
@@ -249,13 +274,16 @@ def index_source(source_id: int) -> int:
                     video_url = e.get("webpage_url") or e.get("url") or f"https://www.youtube.com/watch?v={vid}"
                     if not video_url.startswith("http"):
                         video_url = f"https://www.youtube.com/watch?v={vid}"
+                    date = entry_date(e)
+                    # older than the source's range: list it (pending, can be queued by hand) but don't download
+                    auto = source["auto_download"] and not (after and date and date < after)
                     with db.tx() as conn:
                         cur = conn.execute(
                             "INSERT OR IGNORE INTO media(source_id, video_id, title, url, upload_date, duration, status) "
                             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            (source_id, vid, e.get("title") or vid, video_url, e.get("upload_date"),
+                            (source_id, vid, e.get("title") or vid, video_url, date,
                              int(e["duration"]) if e.get("duration") else None,
-                             "queued" if source["auto_download"] else "pending"))
+                             "queued" if auto else "pending"))
                         new += cur.rowcount
         db.run("UPDATE sources SET last_indexed=datetime('now'), last_error=NULL WHERE id=?", (source_id,))
         db.log("info", f"Indexed {source['name']}: {new} new")
@@ -320,7 +348,7 @@ def download(media_id: int) -> str:
             raise RuntimeError(f"Download folder {dest['name']}: {why}")
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(item["url"], download=False)
-            if reason := skip_reason(source, info):
+            if not item["manual"] and (reason := skip_reason(source, info)):
                 db.run("UPDATE media SET status='skipped', error=?, title=?, upload_date=? WHERE id=?",
                        (reason, info.get("title") or item["title"], info.get("upload_date"), media_id))
                 return "skipped"

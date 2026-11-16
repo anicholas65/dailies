@@ -881,3 +881,85 @@ def test_extension_zip(client, monkeypatch):
     for f in [manifest["background"]["service_worker"], manifest["options_page"], manifest["action"]["default_popup"],
               *manifest["content_scripts"][0]["js"], *manifest["icons"].values()]:
         assert "dailies-extension/" + f in names
+
+
+def _flat_ydl(entries):
+    class FakeYDL:
+        def __init__(self, opts): self.opts = opts
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def extract_info(self, url, download=False):
+            assert self.opts["extractor_args"]["youtubetab"]["approximate_date"] == [""]
+            return {"_type": "playlist", "entries": entries}
+    return FakeYDL
+
+
+def test_since_date():
+    import datetime as dt
+    today = dt.date.today()
+    assert ytdl.since_date("new") == today.isoformat()
+    assert ytdl.since_date("30") == (today - dt.timedelta(days=30)).isoformat()
+    assert ytdl.since_date("all") == ""
+    assert ytdl.since_date("bogus") is None and ytdl.since_date(None) is None
+
+
+def test_index_lists_but_does_not_queue_videos_before_range(client, monkeypatch):
+    import datetime as dt
+    now = dt.datetime.now(dt.timezone.utc)
+    client.post("/sources", data={"url": "https://www.youtube.com/@Show", "since": "7"})
+    s = db.one("SELECT * FROM sources")
+    assert s["download_after"] == ytdl.since_date("7")
+    monkeypatch.setattr(ytdl.yt_dlp, "YoutubeDL", _flat_ydl([
+        {"id": "new00000000", "title": "New", "timestamp": (now - dt.timedelta(days=2)).timestamp()},
+        {"id": "old00000000", "title": "Old", "timestamp": (now - dt.timedelta(days=40)).timestamp()},
+        {"id": "undated0000", "title": "No date"},
+    ]))
+    assert ytdl.index_source(s["id"]) == 3
+    st = {r["video_id"]: r["status"] for r in db.q("SELECT * FROM media")}
+    assert st == {"new00000000": "queued", "old00000000": "pending", "undated0000": "queued"}
+    assert db.one("SELECT upload_date FROM media WHERE video_id='old00000000'")["upload_date"] == \
+        (now - dt.timedelta(days=40)).strftime("%Y%m%d")
+    # "Download all not yet downloaded" overrides the range, including ones skipped at download time
+    db.run("UPDATE media SET status='skipped', error='uploaded 20200101 (before x)' WHERE video_id='undated0000'")
+    client.post(f"/sources/{s['id']}/queue-all")
+    st = {r["video_id"]: (r["status"], r["manual"]) for r in db.q("SELECT * FROM media")}
+    assert st == {"new00000000": ("queued", 0), "old00000000": ("queued", 1), "undated0000": ("queued", 1)}
+
+
+def test_manual_queue_bypasses_date_range(client, monkeypatch):
+    client.post("/sources", data={"url": "https://www.youtube.com/@Show", "since": "new"})
+    sid = db.one("SELECT id FROM sources")["id"]
+    mid = db.run("INSERT INTO media(source_id, video_id, title, url, status) VALUES (?, 'old00000000', 'Old', 'u', 'pending')",
+                 (sid,))
+    client.post(f"/media/{mid}/queue")
+    assert db.one("SELECT manual FROM media WHERE id=?", (mid,))["manual"] == 1
+
+
+def test_single_video_source_ignores_range(client):
+    client.post("/sources", data={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "since": "new"})
+    assert db.one("SELECT download_after FROM sources")["download_after"] == ""
+
+
+def test_extension_series_range(client, monkeypatch):
+    h = {"Authorization": f"Bearer {_ext_key(client, monkeypatch)}", "Origin": "chrome-extension://abcdef"}
+    info = client.get("/api/ext/info", headers=h).json()
+    assert [r["key"] for r in info["since"]][:2] == ["new", "3"]
+    r = client.post("/api/ext/download", headers=h, json={"url": "https://www.youtube.com/@A", "title": "A"}).json()
+    assert "Only new uploads" in r["message"]
+    assert db.one("SELECT download_after FROM sources WHERE name='A'")["download_after"] == ytdl.since_date("new")
+    r = client.post("/api/ext/download", headers=h, json={"url": "https://www.youtube.com/playlist?list=PLx", "title": "P"}).json()
+    assert db.one("SELECT download_after FROM sources WHERE name='P'")["download_after"] == ""  # playlists: everything
+    client.post("/api/ext/download", headers=h, json={"url": "https://www.youtube.com/@B", "title": "B", "since": "30"})
+    b = db.one("SELECT * FROM sources WHERE name='B'")
+    assert b["download_after"] == ytdl.since_date("30")
+    # adding an existing channel again with a range queues the already-listed videos in it
+    import datetime as dt
+    a = db.one("SELECT id FROM sources WHERE name='A'")["id"]
+    recent = (dt.date.today() - dt.timedelta(days=5)).strftime("%Y%m%d")
+    for vid, date in (("recent00000", recent), ("ancient0000", "20200101")):
+        db.run("INSERT INTO media(source_id, video_id, title, url, upload_date, status) VALUES (?, ?, ?, 'u', ?, 'pending')",
+               (a, vid, vid, date))
+    r = client.post("/api/ext/download", headers=h, json={"url": "https://www.youtube.com/@A", "since": "7"}).json()
+    assert r["status"] == "exists" and "Queued 1 video from last week" in r["message"]
+    st = {m["video_id"]: m["status"] for m in db.q("SELECT * FROM media WHERE source_id=?", (a,))}
+    assert st == {"recent00000": "queued", "ancient0000": "pending"}

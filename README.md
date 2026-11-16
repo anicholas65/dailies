@@ -7,6 +7,7 @@ Self-hosted YouTube archiver for Unraid, in the spirit of Pinchflat — with **Y
 - Profiles: quality cap (4K…480p, audio-only), MP4/MKV, prefer H.264, subtitles, SponsorBlock, chapters, thumbnails, Jellyfin/Plex/Kodi `.nfo`
 - Download folders (Settings): YouTube, Educational, Movies, Concerts, MP3 out of the box, each with a Jellyfin layout (Shows, Movies or Music); every source picks one, audio-only sources default to MP3
 - Files are organised by publisher: `Channel/Season YYYY/sYYYYeMMDDnn - Title [id].mp4`, whatever source (channel, playlist or single video) they came from. The video thumbnail is embedded as cover art and saved as `-thumb.jpg`; the channel avatar becomes the show poster (fitted on a 2:3 poster so Jellyfin doesn't crop it) and the banner the fanart. If the channel art can't be fetched, a video thumbnail stands in and the real art is retried once a day
+- Channels and playlists download a range you pick when adding them: only new uploads (channel default), the last 3/7/30/60/90/365 days, or everything (playlist default). Older videos are listed on the source page but not downloaded; **Download all not yet downloaded** or a video's Queue button fetches them anyway
 - Per-source filters: newest N, skip uploads before a date, title include/exclude regex, minimum length, Shorts/livestream toggles, auto-delete after N days
 - yt-dlp + deno (YouTube JS challenges) + ffmpeg; yt-dlp self-updates on container start
 
@@ -19,8 +20,8 @@ yt-dlp can't log in with a username/password any more — YouTube only accepts b
 The `extension/` folder is a Chrome extension that works like Internet Download Manager. It runs in the Chrome you already use, so there's nothing to sign in to on the server:
 
 - It sends Dailies your **youtube.com** cookies (never google.com ones) and resends them whenever Chrome rotates them, plus every 30 minutes.
-- A **Download** button on YouTube video, playlist and channel pages (and a right-click "Download with Dailies") queues the page on Dailies with the format (profile) and folder you pick.
-- On the YouTube home feed, search, subscriptions and sidebars, hovering a video tile shows a **Dailies** chip: add that video's **whole channel as a series**, its playlist, or just the video, without opening it. Adding a channel or playlist that's already in Dailies just re-checks it for new videos.
+- One Dailies panel everywhere: the **Download** button on YouTube pages, the toolbar icon, and the **Dailies** chip on video tiles (home feed, search, subscriptions, sidebars). Pick **this video**, its **whole channel** as a series, or its **playlist**; for a channel or playlist also how far back to download (only new uploads … everything); then format and folder. Right-click "Download with Dailies" sends a link straight away (channels new uploads only).
+- Adding a channel or playlist that's already in Dailies re-checks it, and with a range queues its listed videos in that range.
 
 Set up: YouTube page → **Download the extension**, unzip, `chrome://extensions` → Developer mode → **Load unpacked**. In the extension's settings enter the Dailies address and a key from **Create key** (needs `DAILIES_PASSWORD`). Only a hash of the key is stored; **Revoke key** cuts the extension off. Each yt-dlp run uses a private copy of `cookies.txt`, so a run can't overwrite a fresher sign-in the extension just sent.
 

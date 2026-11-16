@@ -20,9 +20,24 @@
   const label = btn.querySelector('span');
   const panel = shadow.querySelector('.panel');
 
-  function pageInfo() {
-    return { url: location.href, title: document.title.replace(/^\(\d+\)\s*/, '').replace(/ - YouTube$/, '') };
+  // who made the video on a watch page, so the panel can offer the whole channel too
+  function owner() {
+    for (const a of document.querySelectorAll('ytd-watch-metadata ytd-video-owner-renderer a[href], #owner a[href], ytd-reel-player-overlay-renderer a[href^="/@"]')) {
+      const m = (a.getAttribute('href') || '').match(/^(?:https:\/\/www\.youtube\.com)?\/(@[^/?#]+|channel\/[\w-]+)/);
+      const name = (a.textContent || '').replace(/\s+/g, ' ').trim();
+      if (m) return { url: `https://www.youtube.com/${m[1]}`, name: name || decodeURIComponent(m[1]) };
+    }
+    return null;
   }
+
+  function pageInfo() {
+    const title = document.title.replace(/^\(\d+\)\s*/, '').replace(/ - YouTube$/, '');
+    return { url: location.href, title, choices: dailiesPageChoices(location.href, title, owner()) };
+  }
+  // the toolbar popup asks the page for the same choices
+  chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+    if (msg.type === 'pageChoices') reply(pageInfo());
+  });
 
   function update() {
     const kind = dailiesKind(location.href);

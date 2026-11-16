@@ -130,6 +130,7 @@ def info():
         "version": __version__,
         "profiles": [{"id": p["id"], "name": p["name"]} for p in db.q("SELECT id, name FROM profiles ORDER BY id")],
         "folders": [{"id": f["id"], "name": f["name"]} for f in folders.all_folders()],
+        "since": [{"key": k, "label": v[0]} for k, v in ytdl.SINCE.items()],
         "youtube": sync_state(),
     }
 
@@ -168,19 +169,36 @@ async def download(request: Request):
             db.run("UPDATE media SET status='queued', error=NULL, priority=? WHERE id=?", (top + 1, old["id"]))
             worker.kick()
             return {"ok": True, "message": f"Queued again: {old['title']}{_paused_note()}", "status": "queued"}
+    # which existing videos of a channel/playlist to download; older ones are only listed.
+    # Not given (older extension, right-click menu): channels new uploads only, playlists everything.
+    since_key = str(body.get("since") or ("all" if kind == "playlist" else "new"))
+    after = ytdl.since_date(since_key)
+    if after is None:
+        since_key, after = "new", ytdl.since_date("new")
     if kind != "video" and (old := _existing_source(url, kind)):
+        n = 0
+        if since_key != "new":  # pick up the already-listed videos in the chosen range
+            n = db.run_count("UPDATE media SET status='queued', error=NULL, manual=1 WHERE source_id=? "
+                             "AND status IN ('pending','failed') AND (?='' OR upload_date >= ?)",
+                             (old["id"], after, after.replace("-", "")))
+            worker.kick()
         worker.index_now(old["id"])
+        extra = f" Queued {n} video{'' if n == 1 else 's'} from {ytdl.SINCE[since_key][0].lower()}." if n else ""
         return {"ok": True, "status": "exists", "source_id": old["id"],
-                "message": f"Already in Dailies: {old['name']}. Checking it for new videos now."}
+                "message": f"Already in Dailies: {old['name']}.{extra} Checking it for new videos now." + _paused_note()}
     title = str(body.get("title") or "").strip()[:300]
-    sid = db.run("INSERT INTO sources(name, url, kind, profile_id, folder_id, auto_name) VALUES (?, ?, ?, ?, ?, ?)",
-                 (title or url.rsplit("/", 1)[-1], url, kind, profile["id"], fid, 0 if title else 1))
-    db.log("info", f"Chrome extension added {title or url} ({profile['name']})")
+    sid = db.run("INSERT INTO sources(name, url, kind, profile_id, folder_id, auto_name, download_after) "
+                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (title or url.rsplit("/", 1)[-1], url, kind, profile["id"], fid, 0 if title else 1,
+                  "" if kind == "video" else after))
+    db.log("info", f"Chrome extension added {title or url} ({profile['name']}"
+           + ("" if kind == "video" else f", {ytdl.SINCE[since_key][0].lower()}") + ")")
     worker.index_now(sid)
     what = {"video": "Queued", "playlist": "Added playlist", "channel": "Added channel"}.get(kind, "Added")
+    scope = {"new": "Only new uploads will download.", "all": "Downloading all its videos, then new uploads."}.get(
+        since_key, f"Downloading the {ytdl.SINCE[since_key][0].lower()}, then new uploads.")
     return {"ok": True, "status": "queued", "source_id": sid,
-            "message": f"{what}: {title or url}" + ("" if kind == "video" else ". New uploads download on its schedule.")
-            + _paused_note()}
+            "message": f"{what}: {title or url}" + ("" if kind == "video" else ". " + scope) + _paused_note()}
 
 
 def _series_key(url: str, kind: str) -> str:

@@ -279,7 +279,7 @@ def sources(request: Request):
         SUM(m.status='failed') failed, COUNT(m.id) total
         FROM sources s JOIN profiles p ON p.id=s.profile_id LEFT JOIN media m ON m.source_id=s.id
         GROUP BY s.id ORDER BY s.name COLLATE NOCASE""")
-    return page(request, "sources.html", sources=rows, profiles=db.q("SELECT * FROM profiles ORDER BY id"),
+    return page(request, "sources.html", since=ytdl.SINCE, sources=rows, profiles=db.q("SELECT * FROM profiles ORDER BY id"),
                 folders=folders.all_folders(), folder_names={f["id"]: f["name"] for f in folders.all_folders()},
                 feeds=ytdl.FEEDS, indexing=worker.state["indexing"], auth=browser.status())
 
@@ -291,6 +291,9 @@ async def add_source(request: Request):
     if not url:
         return back("/sources")
     vals["kind"] = vals.get("kind") or ytdl.detect_kind(url)
+    since = ytdl.since_date((await request.form()).get("since"))
+    if vals["kind"] != "video" and since is not None and not vals.get("download_after"):
+        vals["download_after"] = since
     if not vals.get("name"):  # placeholder until the first index fetches the real title
         vals["name"] = url.rstrip("/").rsplit("/", 1)[-1].lstrip("@") or "Source"
         vals["auto_name"] = 1
@@ -341,7 +344,9 @@ def index_source(sid: int):
 
 @app.post("/sources/{sid}/queue-all")
 def queue_all(sid: int):
-    db.run("UPDATE media SET status='queued' WHERE source_id=? AND status IN ('pending','failed')", (sid,))
+    # by hand, so the source's date range doesn't skip them (also brings back ones it already skipped)
+    db.run("UPDATE media SET status='queued', error=NULL, manual=1 WHERE source_id=? AND (status IN ('pending','failed') "
+           "OR (status='skipped' AND error LIKE 'uploaded %'))", (sid,))
     worker.kick()
     return back(f"/sources/{sid}")
 
@@ -413,11 +418,11 @@ async def media_action(request: Request, mid: int, action: str):
     if m is None:
         return back("/media")
     if action in ("queue", "retry"):
-        db.run("UPDATE media SET status='queued', error=NULL WHERE id=?", (mid,))
+        db.run("UPDATE media SET status='queued', error=NULL, manual=1 WHERE id=?", (mid,))
         worker.kick()
     elif action in ("start", "resume"):  # front of the queue, and make sure the queue is running
         top = db.one("SELECT COALESCE(MAX(priority), 0) p FROM media WHERE status='queued'")["p"]
-        db.run("UPDATE media SET status='queued', error=NULL, priority=? WHERE id=?", (top + 1, mid))
+        db.run("UPDATE media SET status='queued', error=NULL, manual=1, priority=? WHERE id=?", (top + 1, mid))
         worker.set_paused(False)
     elif action == "stop":
         if m["status"] == "downloading":

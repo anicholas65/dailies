@@ -29,6 +29,10 @@ document.getElementById('settings').onclick = () => chrome.runtime.openOptionsPa
   showSync();
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   // the tabs permission isn't requested: url/title are only visible on YouTube tabs (host permission)
+  const url = tab?.url || '';
+  const title = (tab?.title || '').replace(/^\(\d+\)\s*/, '').replace(/ - YouTube$/, '');
+  // the YouTube page knows the video's channel too; fall back to what the address alone gives
+  const fromPage = tab?.id && await chrome.tabs.sendMessage(tab.id, { type: 'pageChoices' }).catch(() => null);
   await dailiesForm(document.getElementById('form'),
-    { url: tab?.url || '', title: (tab?.title || '').replace(/^\(\d+\)\s*/, '').replace(/ - YouTube$/, '') });
+    fromPage?.choices?.length ? fromPage : { url, title, choices: dailiesPageChoices(url, title, null) });
 })();

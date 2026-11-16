@@ -56,9 +56,9 @@ function isYouTube(url) {
   return /^https?:\/\/(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//.test(url || '');
 }
 
-async function download({ url, title, profile_id, folder_id }) {
+async function download({ url, title, profile_id, folder_id, since }) {
   await syncCookies(false).catch(() => {}); // make sure Dailies has the current session first
-  return api('/api/ext/download', { url, title, profile_id, folder_id });
+  return api('/api/ext/download', { url, title, profile_id, folder_id, since });
 }
 
 async function flash(text, color) {

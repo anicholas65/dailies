@@ -141,6 +141,12 @@ def run(sql, args=()) -> int:
         return conn.execute(sql, args).lastrowid
 
 
+def run_count(sql, args=()) -> int:
+    """Like run(), but returns the number of rows changed."""
+    with tx() as conn:
+        return conn.execute(sql, args).rowcount
+
+
 PRESETS_V2 = [  # name, quality, container, write_nfo
     ("720p MP4", "720", "mp4", 1),
     ("2160p (4K) MP4", "2160", "mp4", 1),
@@ -162,6 +168,8 @@ def init():
             conn.execute("ALTER TABLE media ADD COLUMN refresh INTEGER NOT NULL DEFAULT 0")
         if "priority" not in mcols:  # 0.1.15: Start now / Resume put a video at the front of the queue
             conn.execute("ALTER TABLE media ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+        if "manual" not in mcols:  # 0.1.21: queued by hand, so the source's filters don't skip it
+            conn.execute("ALTER TABLE media ADD COLUMN manual INTEGER NOT NULL DEFAULT 0")
         cols = {r[1] for r in conn.execute("PRAGMA table_info(sources)")}
         if "folder_id" not in cols:  # 0.1.12: per-source download folder (NULL = default for profile)
             conn.execute("ALTER TABLE sources ADD COLUMN folder_id INTEGER")
